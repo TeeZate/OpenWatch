@@ -183,8 +183,8 @@ services:
       backend:
         condition: service_healthy
     environment:
-      NEXT_PUBLIC_BACKEND_URL: http://localhost:8000
-      NEXT_PUBLIC_WS_URL: ws://localhost:8000
+      NEXT_PUBLIC_BACKEND_URL: https://openwatch-backend-production.up.railway.app
+      NEXT_PUBLIC_WS_URL: wss://openwatch-backend-production.up.railway.app
     ports:
       - "3000:3000"
     networks: [openwatch]
