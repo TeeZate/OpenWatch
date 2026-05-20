@@ -1,0 +1,190 @@
+# Business Source License 1.1
+# Copyright (c) 2026 OpenWatch
+# Change Date: Four years from the release date of this file
+# Change License: Apache License, Version 2.0
+#
+# Usage: docker compose up --build
+# Full stack: agent + backend + dashboard + all data services
+
+networks:
+  openwatch:
+    driver: bridge
+
+volumes:
+  timescaledb_data:
+  neo4j_data:
+  redis_data:
+  kafka_data:
+  ollama_data:
+
+services:
+
+  # ── Message Bus ──────────────────────────────────────────────────────────────
+
+  zookeeper:
+    image: confluentinc/cp-zookeeper:7.6.1
+    container_name: openwatch-zookeeper
+    environment:
+      ZOOKEEPER_CLIENT_PORT: 2181
+      ZOOKEEPER_TICK_TIME: 2000
+    networks: [openwatch]
+    healthcheck:
+      test: ["CMD", "bash", "-c", "echo ruok | nc localhost 2181"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  kafka:
+    image: confluentinc/cp-kafka:7.6.1
+    container_name: openwatch-kafka
+    depends_on:
+      zookeeper:
+        condition: service_healthy
+    environment:
+      KAFKA_BROKER_ID: 1
+      KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092,PLAINTEXT_HOST://localhost:29092
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT
+      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
+    ports:
+      - "29092:29092"
+    networks: [openwatch]
+    volumes:
+      - kafka_data:/var/lib/kafka/data
+    healthcheck:
+      test: ["CMD", "kafka-broker-api-versions", "--bootstrap-server", "localhost:9092"]
+      interval: 15s
+      timeout: 10s
+      retries: 5
+
+  # ── Databases ────────────────────────────────────────────────────────────────
+
+  timescaledb:
+    image: timescale/timescaledb:latest-pg16
+    container_name: openwatch-timescaledb
+    environment:
+      POSTGRES_USER: openwatch
+      POSTGRES_PASSWORD: openwatch
+      POSTGRES_DB: openwatch_metrics
+    ports:
+      - "5432:5432"
+    volumes:
+      - timescaledb_data:/var/lib/postgresql/data
+    networks: [openwatch]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U openwatch -d openwatch_metrics"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  neo4j:
+    image: neo4j:5.20
+    container_name: openwatch-neo4j
+    environment:
+      NEO4J_AUTH: neo4j/openwatch123
+      NEO4J_PLUGINS: '["apoc"]'
+    ports:
+      - "7474:7474"   # Browser UI
+      - "7687:7687"   # Bolt protocol
+    volumes:
+      - neo4j_data:/data
+    networks: [openwatch]
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:7474"]
+      interval: 15s
+      timeout: 10s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    container_name: openwatch-redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    networks: [openwatch]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ── AI Layer ─────────────────────────────────────────────────────────────────
+
+  ollama:
+    image: ollama/ollama:latest
+    container_name: openwatch-ollama
+    ports:
+      - "11434:11434"
+    volumes:
+      - ollama_data:/root/.ollama
+    networks: [openwatch]
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:11434/api/tags"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # ── Application Services ─────────────────────────────────────────────────────
+
+  backend:
+    build:
+      context: ../backend
+      dockerfile: Dockerfile
+    container_name: openwatch-backend
+    depends_on:
+      kafka:
+        condition: service_healthy
+      timescaledb:
+        condition: service_healthy
+      neo4j:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    environment:
+      KAFKA_BOOTSTRAP_SERVERS: kafka:9092
+      TIMESCALEDB_URL: postgresql://openwatch:openwatch@timescaledb:5432/openwatch_metrics
+      NEO4J_URI: bolt://neo4j:7687
+      NEO4J_USER: neo4j
+      NEO4J_PASSWORD: openwatch123
+      REDIS_URL: redis://redis:6379
+      OLLAMA_URL: http://ollama:11434
+    ports:
+      - "8000:8000"
+    networks: [openwatch]
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+
+  agent:
+    build:
+      context: ../agent
+      dockerfile: Dockerfile
+    container_name: openwatch-agent
+    depends_on:
+      backend:
+        condition: service_healthy
+    environment:
+      BACKEND_URL: http://localhost:8000
+      EMIT_INTERVAL: "30"
+    network_mode: host   # needs host networking to discover local services
+    restart: unless-stopped
+
+  dashboard:
+    build:
+      context: ../dashboard
+      dockerfile: Dockerfile
+    container_name: openwatch-dashboard
+    depends_on:
+      backend:
+        condition: service_healthy
+    environment:
+      NEXT_PUBLIC_BACKEND_URL: http://localhost:8000
+      NEXT_PUBLIC_WS_URL: ws://localhost:8000
+    ports:
+      - "3000:3000"
+    networks: [openwatch]

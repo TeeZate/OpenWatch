@@ -1,0 +1,35 @@
+# Business Source License 1.1
+# Copyright (c) 2026 OpenWatch
+# Change Date: Four years from the release date of this file
+# Change License: Apache License, Version 2.0
+
+"""Async Redis client factory."""
+
+from __future__ import annotations
+
+import logging
+import os
+
+from redis.asyncio import Redis
+
+logger = logging.getLogger(__name__)
+
+# Key schema
+SERVICE_KEY   = "service:{service_id}"          # HASH  — live state per service
+SERVICES_SET  = "services:all"                   # SET   — all known service IDs
+HOST_KEY      = "host:{hostname}"                # HASH  — live state per host
+HOSTS_SET     = "hosts:all"                      # SET   — all known hostnames
+
+# 5 minutes — if the agent stops reporting, stale keys expire on their own.
+SERVICE_TTL_SECONDS = 300
+
+
+def create_redis() -> Redis:
+    url = (
+        os.environ.get("REDIS_URL")
+        or os.environ.get("REDIS_PRIVATE_URL")
+        or "redis://localhost:6379"
+    )
+    client = Redis.from_url(url, decode_responses=True)
+    logger.info("Redis client created (%s)", url)
+    return client

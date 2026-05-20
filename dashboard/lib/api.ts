@@ -1,0 +1,92 @@
+// Business Source License 1.1
+// Copyright (c) 2026 OpenWatch
+// Change Date: Four years from the release date of this file
+// Change License: Apache License, Version 2.0
+
+const BASE = process.env.NEXT_PUBLIC_BACKEND_URL ?? "http://localhost:8000";
+
+export const WS_URL =
+  (process.env.NEXT_PUBLIC_WS_URL ?? "ws://localhost:8000") + "/ws/live";
+
+// ── Types ─────────────────────────────────────────────────────────────────────
+
+export interface CytoscapeNodeData {
+  id: string;
+  label: string;
+  type: "host" | "service";
+  kind?: string;
+  status?: string;
+  latency_ms?: number;
+  port?: number;
+  hostname?: string;
+}
+
+export interface CytoscapeEdgeData {
+  id: string;
+  source: string;
+  target: string;
+}
+
+export interface TopologyResponse {
+  nodes: { data: CytoscapeNodeData }[];
+  edges: { data: CytoscapeEdgeData }[];
+  generated_at: string;
+}
+
+export interface ServiceLiveState {
+  id: string;
+  name: string;
+  kind: string;
+  host: string;
+  port: number;
+  hostname: string;
+  agent_id: string;
+  health_status?: string;
+  latency_ms?: number;
+  message?: string;
+  last_seen?: string;
+}
+
+export interface HealthSummary {
+  total: number;
+  up: number;
+  degraded: number;
+  down: number;
+  unknown: number;
+}
+
+export interface LiveHealthResponse {
+  services: ServiceLiveState[];
+  summary: HealthSummary;
+  generated_at: string;
+}
+
+export interface RiskItem {
+  id: string;
+  severity: "critical" | "warning" | "watch";
+  title: string;
+  summary: string;
+  affected_services: string[];
+  blast_radius?: string;
+  recommendation?: string;
+  metadata?: Record<string, unknown>;
+}
+
+export interface RisksResponse {
+  risks: RiskItem[];
+  generated_at: string;
+}
+
+// ── Fetch helpers ─────────────────────────────────────────────────────────────
+
+async function get<T>(path: string): Promise<T> {
+  const res = await fetch(`${BASE}${path}`, { cache: "no-store" });
+  if (!res.ok) throw new Error(`${path} → ${res.status}`);
+  return res.json() as Promise<T>;
+}
+
+export const fetchTopology   = ()  => get<TopologyResponse>("/api/v1/topology");
+export const fetchLiveHealth = ()  => get<LiveHealthResponse>("/api/v1/health/live");
+export const fetchRisks      = ()  => get<RisksResponse>("/api/v1/risks");
+export const fetchHistory    = (id: string, window = "1 hour") =>
+  get(`/api/v1/health/history/${encodeURIComponent(id)}?window=${encodeURIComponent(window)}`);
