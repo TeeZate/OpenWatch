@@ -19,6 +19,7 @@ SERVICE_KEY   = "service:{service_id}"          # HASH  — live state per servi
 SERVICES_SET  = "services:all"                   # SET   — all known service IDs
 HOST_KEY      = "host:{hostname}"                # HASH  — live state per host
 HOSTS_SET     = "hosts:all"                      # SET   — all known hostnames
+RISKS_KEY     = "risks:latest"                   # STRING — latest AI risk summary (JSON)
 
 # 5 minutes — if the agent stops reporting, stale keys expire on their own.
 SERVICE_TTL_SECONDS = 300

@@ -11,8 +11,8 @@ from datetime import datetime, timezone
 
 from fastapi import APIRouter, Request
 
+from db.redis_client import RISKS_KEY
 from models.responses import RiskItem, RisksResponse
-from stream.intelligence_consumer import RISKS_KEY
 
 logger = logging.getLogger(__name__)
 
