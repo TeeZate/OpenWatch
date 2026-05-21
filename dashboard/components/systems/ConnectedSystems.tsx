@@ -6,11 +6,24 @@ import { useState } from "react";
 import { useSystems } from "@/hooks/useSystems";
 import { SystemCard } from "./SystemCard";
 import { AddSystemModal } from "./AddSystemModal";
+import { SystemDetailView } from "./SystemDetailView";
+import type { MonitoredSystem } from "@/lib/api";
 
 export function ConnectedSystems() {
   const { systems, total, max, loading, error, add, remove } = useSystems();
-  const [showModal, setShowModal] = useState(false);
+  const [showModal,       setShowModal]       = useState(false);
+  const [selectedSystem,  setSelectedSystem]  = useState<MonitoredSystem | null>(null);
   const atLimit = total >= max;
+
+  // ── Detail view ────────────────────────────────────────────────────────────
+  if (selectedSystem) {
+    return (
+      <SystemDetailView
+        system={selectedSystem}
+        onBack={() => setSelectedSystem(null)}
+      />
+    );
+  }
 
   // ── Loading ────────────────────────────────────────────────────────────────
   if (loading) {
@@ -36,7 +49,6 @@ export function ConnectedSystems() {
     return (
       <>
         <div className="flex flex-col items-center justify-center h-full gap-6 px-4">
-          {/* Eye icon */}
           <div className="w-20 h-20 rounded-full bg-blue-950/60 border border-blue-800/40 flex items-center justify-center">
             <svg className="w-10 h-10 text-blue-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
               <path strokeLinecap="round" strokeLinejoin="round"
@@ -49,7 +61,7 @@ export function ConnectedSystems() {
             <h2 className="text-xl font-semibold text-white mb-2">Start monitoring your systems</h2>
             <p className="text-gray-400 text-sm leading-relaxed">
               Add your hosted application URL and OpenWatch will automatically probe its health
-              endpoints every 30 seconds, tracking uptime, latency, and failures.
+              endpoints every 30 seconds, tracking uptime, latency, and sub-service health.
             </p>
           </div>
 
@@ -70,23 +82,21 @@ export function ConnectedSystems() {
         </div>
 
         {showModal && (
-          <AddSystemModal
-            onAdd={add}
-            onClose={() => setShowModal(false)}
-            atLimit={atLimit}
-          />
+          <AddSystemModal onAdd={add} onClose={() => setShowModal(false)} atLimit={atLimit} />
         )}
       </>
     );
   }
 
   // ── Systems grid ───────────────────────────────────────────────────────────
-  const upCount   = systems.filter((s) => s.health_status === "up").length;
-  const downCount = systems.filter((s) => s.health_status === "down").length;
+  const upCount       = systems.filter((s) => s.health_status === "up").length;
+  const downCount     = systems.filter((s) => s.health_status === "down").length;
+  const degradedCount = systems.filter((s) => s.health_status === "degraded").length;
 
   return (
     <>
       <div className="flex flex-col h-full overflow-hidden">
+
         {/* Toolbar */}
         <div className="flex items-center justify-between px-6 py-4 border-b border-gray-800 flex-shrink-0">
           <div className="flex items-center gap-4">
@@ -96,6 +106,12 @@ export function ConnectedSystems() {
                 <span className="w-2 h-2 rounded-full bg-green-400" />
                 <span className="text-gray-400">{upCount} up</span>
               </span>
+              {degradedCount > 0 && (
+                <span className="flex items-center gap-1.5">
+                  <span className="w-2 h-2 rounded-full bg-yellow-400" />
+                  <span className="text-yellow-400">{degradedCount} degraded</span>
+                </span>
+              )}
               {downCount > 0 && (
                 <span className="flex items-center gap-1.5">
                   <span className="w-2 h-2 rounded-full bg-red-500 animate-pulse" />
@@ -124,18 +140,19 @@ export function ConnectedSystems() {
         <div className="flex-1 overflow-y-auto p-6">
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
             {systems.map((sys) => (
-              <SystemCard key={sys.id} system={sys} onRemove={remove} />
+              <SystemCard
+                key={sys.id}
+                system={sys}
+                onRemove={remove}
+                onClick={setSelectedSystem}
+              />
             ))}
           </div>
         </div>
       </div>
 
       {showModal && (
-        <AddSystemModal
-          onAdd={add}
-          onClose={() => setShowModal(false)}
-          atLimit={atLimit}
-        />
+        <AddSystemModal onAdd={add} onClose={() => setShowModal(false)} atLimit={atLimit} />
       )}
     </>
   );

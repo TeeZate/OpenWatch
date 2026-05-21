@@ -110,7 +110,23 @@ export const fetchLiveHealth = ()  => get<LiveHealthResponse>("/api/v1/health/li
 export const fetchRisks      = ()  => get<RisksResponse>("/api/v1/risks");
 export const fetchHistory    = (id: string, window = "1 hour") =>
   get(`/api/v1/health/history/${encodeURIComponent(id)}?window=${encodeURIComponent(window)}`);
-export const fetchSystems    = ()  => get<SystemsListResponse>("/api/v1/systems");
+export interface SubService {
+  name: string;
+  kind: string;
+  status: string;
+  latency_ms?: number;
+  message?: string;
+}
+
+export interface SystemDetail extends MonitoredSystem {
+  message?: string;
+  probe_path?: string;
+  sub_services: SubService[];
+  updated_at?: string;
+}
+
+export const fetchSystems      = ()         => get<SystemsListResponse>("/api/v1/systems");
+export const fetchSystemDetail = (id: string) => get<SystemDetail>(`/api/v1/systems/${encodeURIComponent(id)}`);
 
 export async function addSystem(name: string, url: string): Promise<{ id: string }> {
   const res = await fetch(`${BASE}/api/v1/systems`, {

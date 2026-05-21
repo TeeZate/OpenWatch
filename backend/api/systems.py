@@ -7,13 +7,14 @@
 
 from __future__ import annotations
 
+import json
 import uuid
-from typing import Optional
+from typing import Any, Optional
 
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel
 
-from db.redis_client import SERVICE_KEY, SERVICES_SET
+from db.redis_client import SERVICE_KEY, SERVICES_SET, SYSTEM_TOPO_KEY
 from db.systems import COUNT_SYSTEMS, DELETE_SYSTEM, INSERT_SYSTEM, SELECT_ALL_SYSTEMS
 
 MAX_SYSTEMS = 10
@@ -89,6 +90,48 @@ async def add_system(body: AddSystemRequest, request: Request) -> dict:
             raise HTTPException(status_code=409, detail="A system with this URL is already being monitored.")
 
     return {"id": system_id, "name": name, "url": url, "message": "System added. First probe within 30 seconds."}
+
+
+@router.get("/systems/{system_id}")
+async def get_system(system_id: str, request: Request) -> dict:
+    """Full detail for a single monitored system, including topology."""
+    pool  = request.app.state.ts_pool
+    redis = request.app.state.redis
+
+    # Fetch from DB
+    async with pool.acquire() as conn:
+        row = await conn.fetchrow(
+            "SELECT id, name, url, added_at FROM systems WHERE id = $1", system_id
+        )
+    if row is None:
+        raise HTTPException(status_code=404, detail="System not found")
+
+    # Live health from Redis
+    raw = await redis.hgetall(SERVICE_KEY.format(service_id=system_id))
+
+    # Topology from Redis (set by prober)
+    topo_raw = await redis.get(SYSTEM_TOPO_KEY.format(system_id=system_id))
+    topo: dict[str, Any] = {}
+    if topo_raw:
+        try:
+            topo = json.loads(topo_raw)
+        except Exception:
+            pass
+
+    latency = raw.get("latency_ms") if raw else None
+    return {
+        "id":           row["id"],
+        "name":         row["name"],
+        "url":          row["url"],
+        "added_at":     row["added_at"].isoformat(),
+        "health_status": raw.get("health_status") if raw else None,
+        "latency_ms":   float(latency) if latency else None,
+        "last_checked": raw.get("checked_at") if raw else None,
+        "message":      topo.get("message"),
+        "probe_path":   topo.get("path"),
+        "sub_services": topo.get("sub_services", []),
+        "updated_at":   topo.get("updated_at"),
+    }
 
 
 @router.delete("/systems/{system_id}", status_code=200)
