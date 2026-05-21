@@ -22,6 +22,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"strings"
 	"time"
@@ -38,20 +39,24 @@ type Client struct {
 }
 
 // NewClient creates a push client with mTLS configured from the probe config.
+// Client cert failure is non-fatal — the probe falls back to HMAC-only auth.
 func NewClient(cfg *config.Config) (*Client, error) {
 	tlsCfg := &tls.Config{InsecureSkipVerify: false}
 
 	certB64 := ""
 
-	// Load client certificate
+	// Load client certificate — non-fatal: HMAC signature still authenticates payloads
+	// even without a client cert. This handles cases where the cert env var is missing
+	// or malformed (e.g. Railway PEM newline escaping not yet normalized upstream).
 	if cfg.CertPEM != "" && cfg.KeyPEM != "" {
 		cert, err := tls.X509KeyPair([]byte(cfg.CertPEM), []byte(cfg.KeyPEM))
 		if err != nil {
-			return nil, fmt.Errorf("load client cert/key: %w", err)
+			log.Printf("[push] WARN: client cert/key failed to parse: %v — pushing without mTLS cert (HMAC auth still active)", err)
+		} else {
+			tlsCfg.Certificates = []tls.Certificate{cert}
+			// Encode PEM for header transmission
+			certB64 = base64.StdEncoding.EncodeToString([]byte(cfg.CertPEM))
 		}
-		tlsCfg.Certificates = []tls.Certificate{cert}
-		// Encode PEM for header transmission
-		certB64 = base64.StdEncoding.EncodeToString([]byte(cfg.CertPEM))
 	}
 
 	transport := &http.Transport{

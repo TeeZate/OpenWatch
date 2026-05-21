@@ -80,8 +80,10 @@ func Load(path string) (*Config, error) {
 		if err := json.Unmarshal([]byte(tokenJSON), &cfg.Token); err != nil {
 			return nil, fmt.Errorf("invalid OPENWATCH_TOKEN_JSON: %w", err)
 		}
-		cfg.CertPEM = certPEM
-		cfg.KeyPEM  = keyPEM
+		// Railway stores env vars with literal \n instead of real newlines.
+		// PEM format requires real newlines — fix them here.
+		cfg.CertPEM = normalizePEM(certPEM)
+		cfg.KeyPEM  = normalizePEM(keyPEM)
 	} else {
 		// ── Fall back to config file ──────────────────────────────────────────
 		data, err := os.ReadFile(path)
@@ -125,6 +127,18 @@ func Load(path string) (*Config, error) {
 	}
 
 	return cfg, nil
+}
+
+// normalizePEM converts Railway-style literal \n sequences to real newlines
+// and trims surrounding whitespace. Railway stores multi-line env vars with
+// the two-character sequence backslash-n instead of a real newline byte,
+// which breaks PEM parsing and tls.X509KeyPair.
+func normalizePEM(pem string) string {
+	if pem == "" {
+		return ""
+	}
+	pem = strings.ReplaceAll(pem, `\n`, "\n")
+	return strings.TrimSpace(pem)
 }
 
 // autoDiscoverServices checks for well-known environment variables and adds
