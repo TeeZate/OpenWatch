@@ -146,6 +146,9 @@ def generate_token(
         or os.environ.get("RAILWAY_PUBLIC_DOMAIN")
         or "https://openwatch-backend-production.up.railway.app"
     )
+    # RAILWAY_PUBLIC_DOMAIN returns the bare domain without protocol — ensure https://
+    if backend_url and not backend_url.startswith("http"):
+        backend_url = "https://" + backend_url
 
     return {
         "token_id":            token_id,
