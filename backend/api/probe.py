@@ -1,0 +1,299 @@
+# Business Source License 1.1
+# Copyright (c) 2026 OpenWatch
+# Change Date: Four years from the release date of this file
+# Change License: Apache License, Version 2.0
+
+"""Probe ingest API.
+
+POST /api/v1/probe/register          — first-time probe activation + fingerprint binding
+POST /api/v1/ingest/{system_id}      — recurring signed telemetry push
+GET  /api/v1/probe/ca.crt            — download the platform CA certificate (public)
+"""
+
+from __future__ import annotations
+
+import datetime
+import json
+import logging
+import time
+
+from fastapi import APIRouter, Header, HTTPException, Request
+from pydantic import BaseModel
+
+from core.cert_authority import get_ca_cert_pem, verify_client_cert
+from core.probe_validator import validate_probe_payload
+from db.probe_tokens import ACTIVATE_TOKEN, SELECT_TOKEN
+from db.redis_client import (
+    PROBE_METRICS_KEY,
+    PROBE_REVOKED_SET,
+    PROBE_SEQ_KEY,
+    PROBE_TOKEN_KEY,
+    SERVICE_KEY,
+    SYSTEM_TOPO_KEY,
+)
+
+logger = logging.getLogger(__name__)
+
+router = APIRouter(prefix="/api/v1", tags=["probe-ingest"])
+
+
+# ── Request models ────────────────────────────────────────────────────────────
+
+class RegisterRequest(BaseModel):
+    token_id:         str
+    system_id:        str
+    host_fingerprint: str
+    probe_version:    str = "unknown"
+    hostname:         str = ""
+
+
+# ── GET /api/v1/probe/ca.crt ─────────────────────────────────────────────────
+
+@router.get("/probe/ca.crt", include_in_schema=False)
+async def get_ca_cert():
+    """Serve the platform CA certificate (PEM). Safe to download — public key only."""
+    from fastapi.responses import PlainTextResponse
+    return PlainTextResponse(get_ca_cert_pem(), media_type="application/x-pem-file")
+
+
+# ── POST /api/v1/probe/register ───────────────────────────────────────────────
+
+@router.post("/probe/register", status_code=200)
+async def register_probe(
+    body: RegisterRequest,
+    request: Request,
+    x_openwatch_client_cert: str | None = Header(default=None),
+) -> dict:
+    """First-time probe registration.
+
+    The probe calls this endpoint once on startup with its host fingerprint.
+    The platform binds the fingerprint to the token — subsequent pushes from
+    a different machine will be rejected (Check 4 in the validation pipeline).
+
+    If the token is already activated (fingerprint already bound), this returns
+    409 unless the same fingerprint is presented again (idempotent re-register).
+    """
+    pool  = request.app.state.ts_pool
+    redis = request.app.state.redis
+
+    token_id         = body.token_id
+    system_id        = body.system_id
+    host_fingerprint = body.host_fingerprint.strip()
+
+    if not host_fingerprint:
+        raise HTTPException(status_code=422, detail="host_fingerprint is required")
+
+    # ── Client cert check (soft — log if missing) ─────────────────────────────
+    if x_openwatch_client_cert:
+        cert_ok, cert_token_id = verify_client_cert(x_openwatch_client_cert)
+        if not cert_ok:
+            raise HTTPException(status_code=401, detail="Client certificate invalid")
+        if cert_token_id != token_id:
+            raise HTTPException(status_code=401, detail="Certificate CN does not match token_id")
+    else:
+        logger.warning("Probe registration for token %s sent no client cert.", token_id)
+
+    # ── Check token is valid and not revoked ──────────────────────────────────
+    is_revoked = await redis.sismember(PROBE_REVOKED_SET, token_id)
+    if is_revoked:
+        raise HTTPException(status_code=401, detail="Token has been revoked")
+
+    redis_key  = PROBE_TOKEN_KEY.format(token_id=token_id)
+    token_data = await redis.hgetall(redis_key)
+    if not token_data:
+        raise HTTPException(status_code=401, detail="Token not found or expired")
+    if token_data.get("system_id") != system_id:
+        raise HTTPException(status_code=403, detail="Token does not belong to this system")
+
+    # ── Check if already activated ────────────────────────────────────────────
+    stored_fp = token_data.get("host_fingerprint", "")
+    if stored_fp:
+        if stored_fp == host_fingerprint:
+            # Idempotent — same machine re-registering (e.g. after restart)
+            logger.info(
+                "Probe re-registered for system %s (token %s) — same fingerprint.",
+                system_id, token_id
+            )
+            return {
+                "registered": True,
+                "status":     "already_active",
+                "system_id":  system_id,
+                "message":    "Probe already registered with this fingerprint.",
+            }
+        else:
+            # Different machine — reject
+            raise HTTPException(
+                status_code=409,
+                detail=(
+                    "Token is already bound to a different host. "
+                    "Revoke this token and issue a new one to re-register."
+                ),
+            )
+
+    # ── Bind fingerprint in Redis ─────────────────────────────────────────────
+    await redis.hset(redis_key, "host_fingerprint", host_fingerprint)
+
+    # ── Bind fingerprint + mark activated in PostgreSQL ───────────────────────
+    async with pool.acquire() as conn:
+        activated = await conn.fetchrow(ACTIVATE_TOKEN, token_id, host_fingerprint)
+
+    if activated is None:
+        # Race condition: another request activated it between our checks — treat as ok
+        logger.warning("ACTIVATE_TOKEN returned no row for token %s — may be a race.", token_id)
+
+    logger.info(
+        "Probe registered: system=%s token=%s host=%s version=%s",
+        system_id, token_id, body.hostname or "unknown", body.probe_version,
+    )
+
+    return {
+        "registered": True,
+        "status":     "activated",
+        "system_id":  system_id,
+        "message":    "Host fingerprint bound. Probe is authorized to push telemetry.",
+    }
+
+
+# ── POST /api/v1/ingest/{system_id} ──────────────────────────────────────────
+
+@router.post("/ingest/{system_id}", status_code=202)
+async def ingest_probe_payload(
+    system_id: str,
+    request:   Request,
+    x_openwatch_signature:    str | None = Header(default=None),
+    x_openwatch_client_cert:  str | None = Header(default=None),
+) -> dict:
+    """Receive a signed telemetry payload from an authorized probe.
+
+    The 6-step validation pipeline runs before any data is written.
+    On success, Redis is updated and a WebSocket event is broadcast.
+    """
+    redis      = request.app.state.redis
+    ws_manager = request.app.state.ws_manager
+
+    # ── Parse body ────────────────────────────────────────────────────────────
+    try:
+        payload = await request.json()
+    except Exception:
+        raise HTTPException(status_code=422, detail="Invalid JSON body")
+
+    # ── Validation pipeline ───────────────────────────────────────────────────
+    valid, error = await validate_probe_payload(
+        system_id=system_id,
+        payload=payload,
+        signature_header=x_openwatch_signature,
+        client_cert_header=x_openwatch_client_cert,
+        redis=redis,
+    )
+    if not valid:
+        logger.warning("Probe ingest rejected for system %s: %s", system_id, error)
+        raise HTTPException(status_code=401, detail=error)
+
+    # ── Write data to Redis ───────────────────────────────────────────────────
+    await _write_probe_data(system_id, payload, redis)
+
+    # ── Broadcast WebSocket event ─────────────────────────────────────────────
+    if ws_manager:
+        try:
+            services    = payload.get("services", [])
+            health_status = _infer_overall_status(services)
+            event = {
+                "type":            "health_update",
+                "source":          "probe",
+                "system_id":       system_id,
+                "health_status":   health_status,
+                "probe_connected": True,
+                "timestamp":       datetime.datetime.now(datetime.timezone.utc).isoformat(),
+            }
+            await ws_manager.broadcast(json.dumps(event))
+        except Exception as exc:
+            logger.warning("WebSocket broadcast failed: %s", exc)
+
+    logger.info(
+        "Probe ingest accepted: system=%s seq=%s services=%d",
+        system_id,
+        payload.get("sequence", "?"),
+        len(payload.get("services", [])),
+    )
+
+    return {"accepted": True, "system_id": system_id}
+
+
+# ── Data writer ───────────────────────────────────────────────────────────────
+
+async def _write_probe_data(system_id: str, payload: dict, redis) -> None:
+    """Write all probe telemetry fields to Redis atomically."""
+    now        = datetime.datetime.now(datetime.timezone.utc).isoformat()
+    token_id   = payload.get("token_id", "")
+    sequence   = int(payload.get("sequence", 0))
+    services   = payload.get("services", [])
+    health_status = _infer_overall_status(services)
+
+    pipe = redis.pipeline()
+
+    # ── 1. Update live health state for this system ───────────────────────────
+    svc_key = SERVICE_KEY.format(service_id=system_id)
+    pipe.hset(svc_key, mapping={
+        "health_status":   health_status,
+        "probe_connected": "1",
+        "probe_last_seen": now,
+        "checked_at":      now,
+        "last_seen":       now,
+    })
+
+    # ── 2. Merge sub-services into topology cache ─────────────────────────────
+    # We fetch the existing topo first (outside the pipeline) then update it
+    topo_key = SYSTEM_TOPO_KEY.format(system_id=system_id)
+
+    # ── 3. Store OS + network + process metrics ───────────────────────────────
+    metrics_key = PROBE_METRICS_KEY.format(system_id=system_id)
+    probe_metrics = {
+        "os":          payload.get("os", {}),
+        "network":     payload.get("network", {}),
+        "processes":   payload.get("processes", []),
+        "topology":    payload.get("topology", {}),
+        "updated_at":  now,
+    }
+    pipe.set(metrics_key, json.dumps(probe_metrics), ex=120)
+
+    # ── 4. Advance sequence number ────────────────────────────────────────────
+    seq_key = PROBE_SEQ_KEY.format(system_id=system_id)
+    pipe.set(seq_key, str(sequence), ex=604_800)  # 7-day TTL
+
+    # ── 5. Update token last_seen ─────────────────────────────────────────────
+    if token_id:
+        token_key = PROBE_TOKEN_KEY.format(token_id=token_id)
+        pipe.hset(token_key, "last_seen", now)
+
+    await pipe.execute()
+
+    # ── 6. Merge sub-services into existing topology (separate read-modify-write)
+    topo_raw = await redis.get(topo_key)
+    topo: dict = {}
+    if topo_raw:
+        try:
+            topo = json.loads(topo_raw)
+        except Exception:
+            pass
+
+    topo["sub_services"]  = services
+    topo["probe_source"]  = True
+    topo["health_status"] = health_status
+    topo["updated_at"]    = now
+    await redis.set(topo_key, json.dumps(topo), ex=120)
+
+
+# ── Helpers ───────────────────────────────────────────────────────────────────
+
+def _infer_overall_status(services: list[dict]) -> str:
+    """Derive an overall health status from a list of service check results."""
+    if not services:
+        return "up"
+    statuses = [s.get("status", "unknown") for s in services]
+    if "down" in statuses:
+        return "down"
+    if "degraded" in statuses:
+        return "degraded"
+    if all(s == "up" for s in statuses):
+        return "up"
+    return "degraded"

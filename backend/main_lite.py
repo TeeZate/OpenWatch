@@ -18,6 +18,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from api.health_api import router as health_router
 from api.ingest_direct import router as ingest_router
+from api.probe import router as probe_router
 from api.risks import router as risks_router
 from api.systems import router as systems_router
 from api.tokens import router as tokens_router
@@ -83,6 +84,7 @@ app.add_middleware(
 )
 
 app.include_router(ingest_router)
+app.include_router(probe_router)
 app.include_router(topology_router)
 app.include_router(health_router)
 app.include_router(risks_router)

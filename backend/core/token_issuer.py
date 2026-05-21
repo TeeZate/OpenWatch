@@ -23,6 +23,7 @@ import base64
 import json
 import logging
 import os
+import secrets
 import time
 import uuid
 from functools import lru_cache
@@ -123,6 +124,12 @@ def generate_token(
     now       = int(time.time())
     expires   = now + (expires_days * 86_400)
 
+    # hmac_key is a 32-byte secret shared between this token download and the
+    # platform. The probe uses it to HMAC-SHA256-sign every telemetry payload.
+    # It is NOT included in the Ed25519-signed canonical payload — it is a
+    # separate transport-layer secret.
+    hmac_key = base64.b64encode(secrets.token_bytes(32)).decode()
+
     payload = _canonical_payload({
         "token_id":  token_id,
         "system_id": system_id,
@@ -146,6 +153,7 @@ def generate_token(
         "scopes":              sorted(scopes),
         "issued_at":           now,
         "expires_at":          expires,
+        "hmac_key":            hmac_key,
         "platform_url":        backend_url,
         "platform_public_key": get_platform_public_key_b64(),
         "signature":           base64.b64encode(signature_bytes).decode(),

@@ -20,6 +20,7 @@ from typing import Optional
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, field_validator
 
+from core.cert_authority import generate_client_cert
 from core.token_issuer import DEFAULT_SCOPES, VALID_SCOPES, generate_token
 from db.probe_tokens import (
     INSERT_TOKEN,
@@ -105,6 +106,13 @@ async def create_token(
         logger.error("Token generation failed: %s", exc)
         raise HTTPException(status_code=500, detail="Token generation failed") from exc
 
+    # ── Generate client certificate (application-layer mTLS) ─────────────────
+    try:
+        cert_pem, key_pem = generate_client_cert(token["token_id"], body.expires_days)
+    except Exception as exc:
+        logger.error("Client cert generation failed: %s", exc)
+        raise HTTPException(status_code=500, detail="Certificate generation failed") from exc
+
     expires_dt = datetime.fromtimestamp(token["expires_at"], tz=timezone.utc)
 
     # ── Persist to PostgreSQL ─────────────────────────────────────────────────
@@ -122,12 +130,13 @@ async def create_token(
     if token_ttl > 0:
         redis_key = PROBE_TOKEN_KEY.format(token_id=token["token_id"])
         await redis.hset(redis_key, mapping={
-            "system_id":       system_id,
-            "scopes":          ",".join(token["scopes"]),
-            "issued_at":       str(token["issued_at"]),
-            "expires_at":      str(token["expires_at"]),
-            "revoked":         "0",
+            "system_id":        system_id,
+            "scopes":           ",".join(token["scopes"]),
+            "issued_at":        str(token["issued_at"]),
+            "expires_at":       str(token["expires_at"]),
+            "revoked":          "0",
             "host_fingerprint": "",
+            "hmac_key":         token.get("hmac_key", ""),
         })
         await redis.expire(redis_key, token_ttl)
 
@@ -138,9 +147,18 @@ async def create_token(
     )
 
     return {
-        "message": "Token issued successfully.",
+        "message":     "Token issued successfully.",
         "system_name": system["name"],
-        "token": token,
+        "token":       token,
+        "cert": {
+            "cert_pem": cert_pem,
+            "key_pem":  key_pem,
+        },
+        "install_hint": (
+            f"Run on your server:  "
+            f"curl -fsSL {token['platform_url']}/probe/install.sh | "
+            f"OPENWATCH_TOKEN_ID={token['token_id']} bash"
+        ),
     }
 
 

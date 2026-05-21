@@ -21,9 +21,10 @@ HOST_KEY         = "host:{hostname}"               # HASH  — live state per ho
 HOSTS_SET        = "hosts:all"                     # SET   — all known hostnames
 RISKS_KEY        = "risks:latest"                  # STRING — latest AI risk summary (JSON)
 SYSTEM_TOPO_KEY  = "system_topo:{system_id}"      # STRING — JSON topology for monitored system
-PROBE_TOKEN_KEY  = "probe_token:{token_id}"       # HASH   — live token state (revocation + fingerprint)
+PROBE_TOKEN_KEY   = "probe_token:{token_id}"      # HASH   — live token state (revocation + fingerprint)
 PROBE_REVOKED_SET = "probe_revoked"               # SET    — token_ids that have been revoked (O(1) check)
-PROBE_SEQ_KEY    = "probe_seq:{system_id}"        # STRING — last accepted sequence number (replay protection)
+PROBE_SEQ_KEY     = "probe_seq:{system_id}"       # STRING — last accepted sequence number (replay protection)
+PROBE_METRICS_KEY = "probe_metrics:{system_id}"   # STRING — JSON OS/network metrics from probe (TTL: 120 s)
 
 # 5 minutes — if the agent stops reporting, stale keys expire on their own.
 SERVICE_TTL_SECONDS = 300
