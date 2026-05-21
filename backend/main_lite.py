@@ -25,6 +25,7 @@ from api.tokens import router as tokens_router
 from api.topology_pg import router as topology_router
 from api.websocket import router as ws_router
 from core.connections import ConnectionManager
+from core.probe_watcher import probe_watcher_loop
 from core.prober import probe_loop
 from db.postgres_topology import init_topology_tables
 from db.probe_metrics_ts import init_probe_metrics_table
@@ -57,15 +58,18 @@ async def lifespan(app: FastAPI):
     app.state.neo4j_driver   = None
     app.state.kafka_producer = None
 
-    prober_task = asyncio.create_task(probe_loop(app))
+    prober_task  = asyncio.create_task(probe_loop(app))
+    watcher_task = asyncio.create_task(probe_watcher_loop(app))
     logger.info("OpenWatch Lite backend ready (Railway mode — no Kafka, no Neo4j)")
     yield
 
     prober_task.cancel()
-    try:
-        await prober_task
-    except asyncio.CancelledError:
-        pass
+    watcher_task.cancel()
+    for task in (prober_task, watcher_task):
+        try:
+            await task
+        except asyncio.CancelledError:
+            pass
     await pool.close()
     await redis.aclose()
     logger.info("OpenWatch Lite shutdown complete")
