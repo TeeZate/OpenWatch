@@ -20,11 +20,13 @@ from api.health_api import router as health_router
 from api.ingest_direct import router as ingest_router
 from api.risks import router as risks_router
 from api.systems import router as systems_router
+from api.tokens import router as tokens_router
 from api.topology_pg import router as topology_router
 from api.websocket import router as ws_router
 from core.connections import ConnectionManager
 from core.prober import probe_loop
 from db.postgres_topology import init_topology_tables
+from db.probe_tokens import init_probe_tokens_table
 from db.redis_client import create_redis
 from db.systems import init_systems_table
 from db.timescale import create_pool
@@ -44,6 +46,7 @@ async def lifespan(app: FastAPI):
 
     await init_topology_tables(pool)
     await init_systems_table(pool)
+    await init_probe_tokens_table(pool)
 
     app.state.ts_pool        = pool
     app.state.redis          = redis
@@ -84,6 +87,7 @@ app.include_router(topology_router)
 app.include_router(health_router)
 app.include_router(risks_router)
 app.include_router(systems_router)
+app.include_router(tokens_router)
 app.include_router(ws_router)
 
 
