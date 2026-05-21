@@ -43,6 +43,7 @@ async def validate_probe_payload(
     signature_header: str | None,
     client_cert_header: str | None,
     redis,
+    raw_body: bytes | None = None,
 ) -> tuple[bool, str | None]:
     """Run the full validation pipeline.
 
@@ -101,7 +102,7 @@ async def validate_probe_payload(
     # ── Check 5: HMAC signature ───────────────────────────────────────────────
     hmac_key = token_data.get("hmac_key", "")
     if hmac_key and signature_header:
-        if not _verify_hmac(payload, hmac_key, signature_header):
+        if not _verify_hmac(raw_body, payload, hmac_key, signature_header):
             return False, "Payload signature invalid — possible tampering in transit"
     elif hmac_key and not signature_header:
         # Token has an hmac_key but no signature was sent — reject
@@ -128,22 +129,38 @@ def _verify_cert(cert_pem_b64: str) -> tuple[bool, str | None]:
         return False, None
 
 
-def _verify_hmac(payload: dict, hmac_key_b64: str, signature_header: str) -> bool:
+def _verify_hmac(
+    raw_body: bytes | None,
+    payload: dict,
+    hmac_key_b64: str,
+    signature_header: str,
+) -> bool:
     """Verify HMAC-SHA256 signature.
 
-    The probe signs a canonical JSON of the full payload (all fields, sorted
-    keys, compact separators) using the token's hmac_key. The signature is
-    sent as: X-OpenWatch-Signature: hmac-sha256=<base64>
+    The probe signs the exact bytes it marshalled with json.Marshal — key order
+    follows Go struct field declaration order, NOT alphabetical. We therefore
+    verify against the raw HTTP body bytes the probe sent, not a re-serialised
+    dict (which would produce different bytes and always fail).
+
+    Fallback: if raw_body is not provided (old call sites), fall back to
+    canonical JSON with sort_keys=True for backward compatibility.
+
+    The signature header format: X-OpenWatch-Signature: hmac-sha256=<base64>
     """
     try:
         key = base64.b64decode(hmac_key_b64)
 
-        # Canonical payload: every field, sorted — same logic the probe uses
-        canonical_bytes = json.dumps(
-            payload, sort_keys=True, separators=(",", ":")
-        ).encode()
+        # Prefer raw bytes — these are exactly what the probe signed.
+        body_bytes: bytes
+        if raw_body is not None:
+            body_bytes = raw_body
+        else:
+            # Legacy fallback: re-serialise with sorted keys
+            body_bytes = json.dumps(
+                payload, sort_keys=True, separators=(",", ":")
+            ).encode()
 
-        expected_digest = hmac.new(key, canonical_bytes, hashlib.sha256).digest()
+        expected_digest = hmac.new(key, body_bytes, hashlib.sha256).digest()
         expected_b64    = base64.b64encode(expected_digest).decode()
 
         # Header may be bare base64 or prefixed with "hmac-sha256="

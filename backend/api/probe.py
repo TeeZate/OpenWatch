@@ -172,8 +172,12 @@ async def ingest_probe_payload(
     ws_manager = request.app.state.ws_manager
 
     # ── Parse body ────────────────────────────────────────────────────────────
+    # Read raw bytes first — they are passed to the HMAC verifier so the
+    # signature is checked against the exact bytes the probe signed, not a
+    # re-serialised dict (which would differ in key order).
+    raw_body = await request.body()
     try:
-        payload = await request.json()
+        payload = json.loads(raw_body)
     except Exception:
         raise HTTPException(status_code=422, detail="Invalid JSON body")
 
@@ -181,6 +185,7 @@ async def ingest_probe_payload(
     valid, error = await validate_probe_payload(
         system_id=system_id,
         payload=payload,
+        raw_body=raw_body,
         signature_header=x_openwatch_signature,
         client_cert_header=x_openwatch_client_cert,
         redis=redis,
