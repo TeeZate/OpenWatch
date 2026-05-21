@@ -22,6 +22,7 @@ from pydantic import BaseModel
 
 from core.cert_authority import get_ca_cert_pem, verify_client_cert
 from core.probe_validator import validate_probe_payload
+from db.probe_metrics_ts import INSERT_PROBE_METRICS, SELECT_PROBE_METRICS_HISTORY
 from db.probe_tokens import ACTIVATE_TOKEN, SELECT_TOKEN
 from db.redis_client import (
     PROBE_METRICS_KEY,
@@ -89,6 +90,43 @@ async def get_probe_status(system_id: str, request: Request) -> dict:
         "processes":  metrics.get("processes", []),
         "topology":   metrics.get("topology", {}),
     }
+
+
+# ── GET /api/v1/systems/{system_id}/probe/metrics/history ────────────────────
+
+@router.get("/systems/{system_id}/probe/metrics/history")
+async def get_probe_metrics_history(
+    system_id: str,
+    request:   Request,
+    window:    str = "1h",
+) -> list[dict]:
+    """Return OS metric snapshots for the given time window.
+
+    window examples: '30m', '1h', '3h', '6h', '24h'
+    Returns up to 360 rows (one per 30-second push cycle, ~3 hours at full rate).
+    """
+    valid_windows = {"30m", "1h", "3h", "6h", "12h", "24h"}
+    if window not in valid_windows:
+        window = "1h"
+
+    pool = request.app.state.ts_pool
+    async with pool.acquire() as conn:
+        rows = await conn.fetch(SELECT_PROBE_METRICS_HISTORY, system_id, window)
+
+    return [
+        {
+            "time":          row["time"].isoformat(),
+            "cpu_pct":       row["cpu_pct"],
+            "mem_used_pct":  row["mem_used_pct"],
+            "mem_used_mb":   row["mem_used_mb"],
+            "disk_used_pct": row["disk_used_pct"],
+            "load_1m":       row["load_1m"],
+            "bytes_in_ps":   row["bytes_in_ps"],
+            "bytes_out_ps":  row["bytes_out_ps"],
+            "connections":   row["connections"],
+        }
+        for row in rows
+    ]
 
 
 # ── POST /api/v1/probe/register ───────────────────────────────────────────────
@@ -229,8 +267,10 @@ async def ingest_probe_payload(
         logger.warning("Probe ingest rejected for system %s: %s", system_id, error)
         raise HTTPException(status_code=401, detail=error)
 
-    # ── Write data to Redis ───────────────────────────────────────────────────
+    # ── Write data to Redis + Postgres time-series ───────────────────────────
+    pool = request.app.state.ts_pool
     await _write_probe_data(system_id, payload, redis)
+    await _write_metrics_history(system_id, payload, pool)
 
     # ── Broadcast WebSocket event ─────────────────────────────────────────────
     if ws_manager:
@@ -324,6 +364,33 @@ async def _write_probe_data(system_id: str, payload: dict, redis) -> None:
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
+
+async def _write_metrics_history(system_id: str, payload: dict, pool) -> None:
+    """Persist one OS+network snapshot row to the probe_os_metrics hypertable."""
+    try:
+        os_m  = payload.get("os",      {})
+        net_m = payload.get("network", {})
+        seq   = int(payload.get("sequence", 0))
+
+        async with pool.acquire() as conn:
+            await conn.execute(
+                INSERT_PROBE_METRICS,
+                system_id,
+                os_m.get("cpu_pct"),
+                os_m.get("mem_used_pct"),
+                os_m.get("mem_used_mb"),
+                os_m.get("mem_total_mb"),
+                os_m.get("disk_used_pct"),
+                os_m.get("load_1m"),
+                net_m.get("bytes_in_ps"),
+                net_m.get("bytes_out_ps"),
+                net_m.get("connections"),
+                seq,
+            )
+    except Exception as exc:
+        # Non-fatal — Redis live state is already written, don't fail the ingest
+        logger.warning("Failed to write metrics history for system %s: %s", system_id, exc)
+
 
 def _infer_overall_status(services: list[dict]) -> str:
     """Derive an overall health status from a list of service check results."""

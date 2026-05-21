@@ -27,6 +27,7 @@ from api.websocket import router as ws_router
 from core.connections import ConnectionManager
 from core.prober import probe_loop
 from db.postgres_topology import init_topology_tables
+from db.probe_metrics_ts import init_probe_metrics_table
 from db.probe_tokens import init_probe_tokens_table
 from db.redis_client import create_redis
 from db.systems import init_systems_table
@@ -48,6 +49,7 @@ async def lifespan(app: FastAPI):
     await init_topology_tables(pool)
     await init_systems_table(pool)
     await init_probe_tokens_table(pool)
+    await init_probe_metrics_table(pool)
 
     app.state.ts_pool        = pool
     app.state.redis          = redis

@@ -3,9 +3,10 @@
 // Copyright (c) 2026 OpenWatch
 
 import { useState } from "react";
-import { useProbeStatus }  from "@/hooks/useProbeStatus";
-import { useProbeTokens }  from "@/hooks/useProbeTokens";
-import { ConnectProbeModal } from "./ConnectProbeModal";
+import { useProbeStatus }   from "@/hooks/useProbeStatus";
+import { useProbeTokens }   from "@/hooks/useProbeTokens";
+import { ConnectProbeModal }    from "./ConnectProbeModal";
+import { ProbeMetricsChart }    from "./ProbeMetricsChart";
 import type { MonitoredSystem } from "@/lib/api";
 
 interface Props {
@@ -199,6 +200,14 @@ export function ProbePanel({ system }: Props) {
               />
             </div>
           )}
+
+          {/* Historical metrics charts */}
+          <div>
+            <p className="text-[10px] font-bold text-gray-500 uppercase tracking-widest mb-2">
+              History
+            </p>
+            <ProbeMetricsChart systemId={system.id} />
+          </div>
 
           {/* Process list */}
           {status.processes.length > 0 && (

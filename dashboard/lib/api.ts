@@ -255,3 +255,24 @@ export interface ProbeStatusResponse {
 
 export const fetchProbeStatus = (systemId: string) =>
   get<ProbeStatusResponse>(`/api/v1/systems/${encodeURIComponent(systemId)}/probe/status`);
+
+// ── Probe metrics history ─────────────────────────────────────────────────────
+
+export type ProbeMetricsWindow = "30m" | "1h" | "3h" | "6h" | "12h" | "24h";
+
+export interface ProbeMetricsPoint {
+  time:          string;
+  cpu_pct:       number | null;
+  mem_used_pct:  number | null;
+  mem_used_mb:   number | null;
+  disk_used_pct: number | null;
+  load_1m:       number | null;
+  bytes_in_ps:   number | null;
+  bytes_out_ps:  number | null;
+  connections:   number | null;
+}
+
+export const fetchProbeMetricsHistory = (systemId: string, window: ProbeMetricsWindow = "1h") =>
+  get<ProbeMetricsPoint[]>(
+    `/api/v1/systems/${encodeURIComponent(systemId)}/probe/metrics/history?window=${window}`
+  );
