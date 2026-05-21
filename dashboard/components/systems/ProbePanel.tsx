@@ -7,7 +7,7 @@ import { useProbeStatus }   from "@/hooks/useProbeStatus";
 import { useProbeTokens }   from "@/hooks/useProbeTokens";
 import { ConnectProbeModal }    from "./ConnectProbeModal";
 import { ProbeMetricsChart }    from "./ProbeMetricsChart";
-import type { MonitoredSystem } from "@/lib/api";
+import type { MonitoredSystem, ProbeToken } from "@/lib/api";
 
 interface Props {
   system: MonitoredSystem;
@@ -66,7 +66,7 @@ function TokenRow({
   onRevoke,
   revoking,
 }: {
-  token:    import("@/lib/api").ProbeToken;
+  token:    ProbeToken;
   onRevoke: (id: string) => void;
   revoking: string | null;
 }) {
