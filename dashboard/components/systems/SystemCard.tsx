@@ -2,6 +2,7 @@
 // Business Source License 1.1
 // Copyright (c) 2026 OpenWatch
 
+import { useProbeStatus } from "@/hooks/useProbeStatus";
 import type { MonitoredSystem } from "@/lib/api";
 
 interface Props {
@@ -19,6 +20,9 @@ const STATUS_STYLES: Record<string, { dot: string; label: string; bg: string; bo
 const DEFAULT_STYLE = { dot: "bg-gray-500", label: "text-gray-400", bg: "bg-gray-900", border: "border-gray-700" };
 
 export function SystemCard({ system, onRemove, onClick }: Props) {
+  const { status: probeStatus } = useProbeStatus(system.id);
+  const probeConnected = probeStatus?.connected ?? false;
+
   const style      = system.health_status ? (STATUS_STYLES[system.health_status] ?? DEFAULT_STYLE) : DEFAULT_STYLE;
   const status     = system.health_status ?? "pending";
   const displayUrl = system.url.replace(/^https?:\/\//, "");
@@ -52,6 +56,15 @@ export function SystemCard({ system, onRemove, onClick }: Props) {
       <div className="flex items-center gap-2 pr-6">
         <span className={`w-2.5 h-2.5 rounded-full flex-shrink-0 ${style.dot}`} />
         <span className="font-semibold text-white truncate text-base">{system.name}</span>
+        {probeConnected && (
+          <span
+            title="Probe connected"
+            className="flex items-center gap-1 text-[9px] font-bold text-green-500 bg-green-950/50 border border-green-800/50 px-1.5 py-0.5 rounded-full flex-shrink-0"
+          >
+            <span className="w-1 h-1 rounded-full bg-green-500 animate-pulse" />
+            PROBE
+          </span>
+        )}
       </div>
 
       {/* URL */}

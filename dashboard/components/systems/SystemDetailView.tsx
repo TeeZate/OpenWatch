@@ -4,6 +4,7 @@
 
 import dynamic from "next/dynamic";
 import { useSystemDetail } from "@/hooks/useSystemDetail";
+import { ProbePanel } from "./ProbePanel";
 import type { MonitoredSystem, SubService } from "@/lib/api";
 
 const SystemTopologyGraph = dynamic(
@@ -254,6 +255,12 @@ export function SystemDetailView({ system, onBack }: Props) {
             </p>
           </div>
         )}
+
+        {/* Probe metrics + connection management */}
+        <div>
+          <SectionLabel label="Probe" />
+          <ProbePanel system={system} />
+        </div>
 
         {/* System info card */}
         <div>

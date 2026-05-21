@@ -56,6 +56,41 @@ async def get_ca_cert():
     return PlainTextResponse(get_ca_cert_pem(), media_type="application/x-pem-file")
 
 
+# ── GET /api/v1/systems/{system_id}/probe/status ─────────────────────────────
+
+@router.get("/systems/{system_id}/probe/status")
+async def get_probe_status(system_id: str, request: Request) -> dict:
+    """Return current probe connection state and latest OS/network metrics.
+
+    Returns connected=false if no telemetry has been received in the last 120s
+    (the Redis TTL set on probe_metrics). This gives the dashboard a reliable
+    liveness signal without a separate heartbeat mechanism.
+    """
+    redis = request.app.state.redis
+
+    metrics_raw = await redis.get(PROBE_METRICS_KEY.format(system_id=system_id))
+    seq_raw     = await redis.get(PROBE_SEQ_KEY.format(system_id=system_id))
+
+    if metrics_raw is None:
+        return {"connected": False, "last_seen": None, "sequence": None,
+                "os": {}, "network": {}, "processes": [], "topology": {}}
+
+    try:
+        metrics = json.loads(metrics_raw)
+    except Exception:
+        metrics = {}
+
+    return {
+        "connected":  True,
+        "last_seen":  metrics.get("updated_at"),
+        "sequence":   int(seq_raw) if seq_raw else 0,
+        "os":         metrics.get("os", {}),
+        "network":    metrics.get("network", {}),
+        "processes":  metrics.get("processes", []),
+        "topology":   metrics.get("topology", {}),
+    }
+
+
 # ── POST /api/v1/probe/register ───────────────────────────────────────────────
 
 @router.post("/probe/register", status_code=200)

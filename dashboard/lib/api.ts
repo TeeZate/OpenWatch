@@ -147,3 +147,111 @@ export async function removeSystem(id: string): Promise<void> {
   });
   if (!res.ok) throw new Error(`Delete failed: ${res.status}`);
 }
+
+// ── Probe tokens ──────────────────────────────────────────────────────────────
+
+export interface ProbeToken {
+  token_id:         string;
+  system_id:        string;
+  scopes:           string[];
+  issued_at:        string;
+  expires_at:       string;
+  revoked:          boolean;
+  activated:        boolean;
+  host_fingerprint: string | null;
+}
+
+export interface IssueTokenResponse {
+  message:      string;
+  system_name:  string;
+  token: {
+    token_id:            string;
+    system_id:           string;
+    scopes:              string[];
+    issued_at:           number;
+    expires_at:          number;
+    hmac_key:            string;
+    platform_url:        string;
+    platform_public_key: string;
+    signature:           string;
+  };
+  cert: {
+    cert_pem: string;
+    key_pem:  string;
+  };
+  install_hint: string;
+}
+
+export async function fetchProbeTokens(systemId: string): Promise<ProbeToken[]> {
+  return get<ProbeToken[]>(`/api/v1/systems/${encodeURIComponent(systemId)}/tokens`);
+}
+
+export async function issueProbeToken(systemId: string): Promise<IssueTokenResponse> {
+  const res = await fetch(
+    `${BASE}/api/v1/systems/${encodeURIComponent(systemId)}/token`,
+    {
+      method:  "POST",
+      headers: { "Content-Type": "application/json" },
+      body:    JSON.stringify({ scopes: ["os", "services", "network", "processes"] }),
+    }
+  );
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ detail: res.statusText }));
+    throw new Error(err.detail ?? "Token issuance failed");
+  }
+  return res.json();
+}
+
+export async function revokeProbeToken(systemId: string, tokenId: string): Promise<void> {
+  const res = await fetch(
+    `${BASE}/api/v1/systems/${encodeURIComponent(systemId)}/token/${encodeURIComponent(tokenId)}`,
+    { method: "DELETE" }
+  );
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ detail: res.statusText }));
+    throw new Error(err.detail ?? "Revoke failed");
+  }
+}
+
+// ── Probe status + metrics ────────────────────────────────────────────────────
+
+export interface ProbeOSMetrics {
+  cpu_pct:       number;
+  mem_used_mb:   number;
+  mem_total_mb:  number;
+  mem_used_pct:  number;
+  disk_used_pct: number;
+  disk_used_gb:  number;
+  disk_total_gb: number;
+  load_1m:       number;
+  uptime_s:      number;
+  os:            string;
+}
+
+export interface ProbeNetworkMetrics {
+  open_ports:   number[];
+  connections:  number;
+  bytes_in_ps:  number;
+  bytes_out_ps: number;
+}
+
+export interface ProbeProcess {
+  pid:    number;
+  name:   string;
+  cpu_pct: number;
+  mem_mb:  number;
+  status: string;
+}
+
+export interface ProbeStatusResponse {
+  connected:  boolean;
+  last_seen:  string | null;
+  sequence:   number | null;
+  os:         Partial<ProbeOSMetrics>;
+  network:    Partial<ProbeNetworkMetrics>;
+  processes:  ProbeProcess[];
+  topology:   Record<string, unknown>;
+}
+
+export const fetchProbeStatus = (systemId: string) =>
+  get<ProbeStatusResponse>(`/api/v1/systems/${encodeURIComponent(systemId)}/probe/status`);
