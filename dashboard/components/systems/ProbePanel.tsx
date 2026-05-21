@@ -176,9 +176,9 @@ export function ProbePanel({ system }: Props) {
               color={diskColor}
             />
             <MetricCard
-              label="Load (1m)"
+              label="Load avg"
               value={`${(os.load_1m ?? 0).toFixed(2)}`}
-              sub={`${(net.connections ?? 0)} connections`}
+              sub={`5m ${(os.load_5m ?? 0).toFixed(2)} · ${(net.connections ?? 0)} conn`}
             />
           </div>
 

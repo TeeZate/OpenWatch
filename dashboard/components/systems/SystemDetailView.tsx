@@ -4,8 +4,9 @@
 
 import dynamic from "next/dynamic";
 import { useSystemDetail } from "@/hooks/useSystemDetail";
-import { ProbePanel } from "./ProbePanel";
-import type { MonitoredSystem, SubService } from "@/lib/api";
+import { useProbeStatus }  from "@/hooks/useProbeStatus";
+import { ProbePanel }      from "./ProbePanel";
+import type { MonitoredSystem, SubService, ProbeTopologyInfo } from "@/lib/api";
 
 const SystemTopologyGraph = dynamic(
   () => import("./SystemTopologyGraph").then((m) => m.SystemTopologyGraph),
@@ -46,6 +47,8 @@ function StatusBadge({ status }: { status?: string }) {
 function KindIcon({ kind }: { kind: string }) {
   const icons: Record<string, string> = {
     database:      "🗄",
+    postgres:      "🐘",
+    postgresql:    "🐘",
     mongodb:       "🍃",
     redis:         "⚡",
     kafka:         "📨",
@@ -54,6 +57,7 @@ function KindIcon({ kind }: { kind: string }) {
     elasticsearch: "🔍",
     email:         "✉",
     http:          "🌐",
+    https:         "🌐",
   };
   return <span>{icons[kind] ?? "⚙"}</span>;
 }
@@ -142,12 +146,67 @@ function GraphSkeleton() {
   );
 }
 
+// ── Infrastructure info panel ──────────────────────────────────────────────────
+
+function formatUptime(s: number): string {
+  if (s < 60)     return `${s}s`;
+  if (s < 3600)   return `${Math.floor(s / 60)}m`;
+  if (s < 86400)  return `${Math.floor(s / 3600)}h ${Math.floor((s % 3600) / 60)}m`;
+  const d = Math.floor(s / 86400);
+  const h = Math.floor((s % 86400) / 3600);
+  return `${d}d ${h}h`;
+}
+
+const OS_ICON: Record<string, string> = {
+  linux:   "🐧",
+  darwin:  "🍎",
+  windows: "🪟",
+};
+
+function InfraPanel({
+  topo,
+  os,
+}: {
+  topo: Partial<ProbeTopologyInfo>;
+  os:   Record<string, unknown>;
+}) {
+  const osIcon  = OS_ICON[topo.os ?? ""] ?? "🖥";
+  const uptimeS = typeof os.uptime_s === "number" ? os.uptime_s : null;
+  const load1m  = typeof os.load_1m  === "number" ? (os.load_1m  as number).toFixed(2) : null;
+  const load5m  = typeof os.load_5m  === "number" ? (os.load_5m  as number).toFixed(2) : null;
+  const load15m = typeof os.load_15m === "number" ? (os.load_15m as number).toFixed(2) : null;
+
+  const cards: { label: string; value: string; mono?: boolean }[] = [];
+
+  if (topo.hostname) cards.push({ label: "Hostname",     value: topo.hostname, mono: true });
+  if (topo.os)       cards.push({ label: "Platform",     value: `${osIcon} ${topo.os}${topo.arch ? " · " + topo.arch : ""}` });
+  if (topo.arch)     cards.push({ label: "Architecture", value: topo.arch, mono: true });
+  if (uptimeS != null) cards.push({ label: "Uptime", value: formatUptime(uptimeS) });
+  if (load1m)        cards.push({ label: "Load avg", value: `${load1m} · ${load5m ?? "—"} · ${load15m ?? "—"}`, mono: true });
+
+  if (cards.length === 0) return null;
+
+  return (
+    <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-2">
+      {cards.map((c) => (
+        <div key={c.label} className="bg-gray-900 border border-gray-800 rounded-lg px-3 py-2.5">
+          <p className="text-[10px] text-gray-500 uppercase tracking-widest mb-1">{c.label}</p>
+          <p className={`text-sm font-semibold text-gray-100 truncate ${c.mono ? "font-mono" : ""}`}>
+            {c.value}
+          </p>
+        </div>
+      ))}
+    </div>
+  );
+}
+
 // ── Main detail view ───────────────────────────────────────────────────────────
 
 export function SystemDetailView({ system, onBack }: Props) {
-  const { detail, loading, error } = useSystemDetail(system.id);
+  const { detail, loading, error }  = useSystemDetail(system.id);
+  const { status: probeStatus }     = useProbeStatus(system.id);
 
-  const active = detail ?? system;
+  const active   = detail ?? system;
   const hostname = (() => {
     try { return new URL(system.url).hostname; } catch { return system.url; }
   })();
@@ -155,6 +214,11 @@ export function SystemDetailView({ system, onBack }: Props) {
   const lastChecked = active.last_checked
     ? new Date(active.last_checked).toLocaleTimeString()
     : "pending first probe…";
+
+  // Probe topology — passed to graph for 3-tier rendering
+  const probeTopology = probeStatus?.connected
+    ? (probeStatus.topology as Partial<ProbeTopologyInfo>)
+    : undefined;
 
   return (
     <div className="flex flex-col h-full bg-gray-950 overflow-hidden">
@@ -180,6 +244,12 @@ export function SystemDetailView({ system, onBack }: Props) {
           {active.latency_ms != null && (
             <span className="text-xs font-mono text-gray-400">
               {active.latency_ms.toFixed(0)} ms
+            </span>
+          )}
+          {probeStatus?.connected && (
+            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-green-950/50 border border-green-800 text-green-400 text-[10px] font-bold uppercase tracking-wider">
+              <span className="w-1.5 h-1.5 rounded-full bg-green-500 animate-pulse" />
+              Probe
             </span>
           )}
         </div>
@@ -208,6 +278,17 @@ export function SystemDetailView({ system, onBack }: Props) {
         {/* Alerts */}
         {detail && <AlertsBanner services={detail.sub_services} />}
 
+        {/* ── Infrastructure info (probe-only) ──────────────────────────── */}
+        {probeStatus?.connected && probeStatus.topology?.hostname && (
+          <div>
+            <SectionLabel label="Infrastructure" />
+            <InfraPanel
+              topo={probeStatus.topology as Partial<ProbeTopologyInfo>}
+              os={probeStatus.os as Record<string, unknown>}
+            />
+          </div>
+        )}
+
         {/* Topology + Services — two-column when there are sub-services */}
         {detail && (
           <div className={`grid gap-5 ${
@@ -219,8 +300,17 @@ export function SystemDetailView({ system, onBack }: Props) {
             {/* Topology graph */}
             <div className={`${detail.sub_services.length > 0 ? "lg:col-span-3" : ""}`}>
               <SectionLabel label="System Topology" />
-              <div className="h-72 lg:h-96 rounded-lg overflow-hidden border border-gray-800">
-                <SystemTopologyGraph system={detail} />
+              <div className={`rounded-lg overflow-hidden border border-gray-800 ${
+                probeStatus?.connected
+                  ? detail.sub_services.length > 0
+                    ? "h-96 lg:h-[28rem]"
+                    : "h-56"
+                  : "h-72 lg:h-96"
+              }`}>
+                <SystemTopologyGraph
+                  system={detail}
+                  probeTopology={probeTopology}
+                />
               </div>
 
               {/* Probe path info */}
@@ -245,14 +335,30 @@ export function SystemDetailView({ system, onBack }: Props) {
           </div>
         )}
 
-        {/* No sub-services discovered */}
+        {/* No sub-services — show helpful hint */}
         {detail && detail.sub_services.length === 0 && !loading && (
-          <div className="rounded-lg border border-gray-800 bg-gray-900/30 px-4 py-5 text-center">
-            <p className="text-gray-400 text-sm mb-1">No sub-services detected</p>
-            <p className="text-gray-600 text-xs">
-              The health endpoint returned a simple response with no service breakdown.
-              Install the OpenWatch agent on your app to get full topology visibility.
-            </p>
+          <div className="rounded-lg border border-gray-800 bg-gray-900/30 px-4 py-4">
+            <p className="text-gray-400 text-sm mb-1 font-semibold">No sub-services detected</p>
+            {probeStatus?.connected ? (
+              <div className="space-y-2">
+                <p className="text-gray-500 text-xs">
+                  The probe is connected but no services were discovered. To enable topology mapping,
+                  add your database and cache connection strings as environment variables on the probe service:
+                </p>
+                <div className="bg-gray-950 border border-gray-700 rounded px-3 py-2 font-mono text-[11px] text-gray-400 space-y-0.5">
+                  <div><span className="text-blue-400">DATABASE_URL</span>=postgresql://…</div>
+                  <div><span className="text-red-400">REDIS_URL</span>=redis://…</div>
+                  <div><span className="text-green-400">MONGODB_URL</span>=mongodb://…  <span className="text-gray-600"># optional</span></div>
+                </div>
+                <p className="text-gray-600 text-[11px]">
+                  Add these in Railway → probe service → Variables, then redeploy.
+                </p>
+              </div>
+            ) : (
+              <p className="text-gray-600 text-xs">
+                Install the OpenWatch probe inside your infrastructure to get full topology visibility.
+              </p>
+            )}
           </div>
         )}
 

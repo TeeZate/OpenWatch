@@ -224,8 +224,16 @@ export interface ProbeOSMetrics {
   disk_used_gb:  number;
   disk_total_gb: number;
   load_1m:       number;
+  load_5m:       number;
+  load_15m:      number;
   uptime_s:      number;
   os:            string;
+}
+
+export interface ProbeTopologyInfo {
+  hostname: string;
+  os:       string;   // "linux" | "darwin" | "windows"
+  arch:     string;   // "amd64" | "arm64" etc.
 }
 
 export interface ProbeNetworkMetrics {
@@ -250,7 +258,7 @@ export interface ProbeStatusResponse {
   os:         Partial<ProbeOSMetrics>;
   network:    Partial<ProbeNetworkMetrics>;
   processes:  ProbeProcess[];
-  topology:   Record<string, unknown>;
+  topology:   Partial<ProbeTopologyInfo>;
 }
 
 export const fetchProbeStatus = (systemId: string) =>

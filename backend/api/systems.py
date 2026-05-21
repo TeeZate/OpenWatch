@@ -14,7 +14,16 @@ from typing import Any, Optional
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel
 
-from db.redis_client import SERVICE_KEY, SERVICES_SET, SYSTEM_TOPO_KEY
+from db.redis_client import (
+    PROBE_METRICS_KEY,
+    PROBE_REVOKED_SET,
+    PROBE_SEQ_KEY,
+    PROBE_TOKEN_KEY,
+    SERVICE_KEY,
+    SERVICES_SET,
+    SYSTEM_TOPO_KEY,
+)
+from db.probe_tokens import SELECT_TOKENS_FOR_SYSTEM
 from db.systems import COUNT_SYSTEMS, DELETE_SYSTEM, INSERT_SYSTEM, SELECT_ALL_SYSTEMS
 
 MAX_SYSTEMS = 10
@@ -139,12 +148,30 @@ async def remove_system(system_id: str, request: Request) -> dict:
     pool  = request.app.state.ts_pool
     redis = request.app.state.redis
 
+    # ── Fetch token IDs before cascade-delete so we can clean Redis ──────────
     async with pool.acquire() as conn:
+        token_rows = await conn.fetch(SELECT_TOKENS_FOR_SYSTEM, system_id)
         row = await conn.fetchrow(DELETE_SYSTEM, system_id)
         if row is None:
             raise HTTPException(status_code=404, detail="System not found")
+        # probe_authorizations rows are cascade-deleted by the FK constraint
 
-    await redis.delete(SERVICE_KEY.format(service_id=system_id))
+    # ── Clean up all Redis keys for this system ───────────────────────────────
+    keys_to_delete = [
+        SERVICE_KEY.format(service_id=system_id),
+        SYSTEM_TOPO_KEY.format(system_id=system_id),
+        PROBE_METRICS_KEY.format(system_id=system_id),
+        PROBE_SEQ_KEY.format(system_id=system_id),
+    ]
+    # Also remove each probe token's Redis hash and revocation entry
+    for token_row in token_rows:
+        tid = token_row["token_id"]
+        keys_to_delete.append(PROBE_TOKEN_KEY.format(token_id=tid))
+        await redis.srem(PROBE_REVOKED_SET, tid)
+
+    if keys_to_delete:
+        await redis.delete(*keys_to_delete)
+
     await redis.srem(SERVICES_SET, system_id)
 
     return {"deleted": system_id}

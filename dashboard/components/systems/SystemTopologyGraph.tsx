@@ -4,10 +4,11 @@
 
 import cytoscape from "cytoscape";
 import { useEffect, useRef } from "react";
-import type { SystemDetail } from "@/lib/api";
+import type { SystemDetail, ProbeTopologyInfo } from "@/lib/api";
 
 interface Props {
-  system: SystemDetail;
+  system:         SystemDetail;
+  probeTopology?: Partial<ProbeTopologyInfo>;
 }
 
 const STATUS_COLORS: Record<string, string> = {
@@ -19,6 +20,8 @@ const STATUS_COLORS: Record<string, string> = {
 
 const KIND_BG: Record<string, string> = {
   database:      "#1d4ed8",
+  postgres:      "#1d4ed8",
+  postgresql:    "#1d4ed8",
   mongodb:       "#15803d",
   redis:         "#b91c1c",
   kafka:         "#6d28d9",
@@ -27,30 +30,40 @@ const KIND_BG: Record<string, string> = {
   elasticsearch: "#0369a1",
   email:         "#be185d",
   http:          "#374151",
+  https:         "#374151",
 };
 
 const KIND_LABEL: Record<string, string> = {
   database:      "DB",
+  postgres:      "PG",
+  postgresql:    "PG",
   mongodb:       "Mongo",
-  redis:         "Cache",
+  redis:         "Redis",
   kafka:         "Queue",
   payment:       "Pay",
   storage:       "Storage",
   elasticsearch: "Search",
   email:         "Mail",
-  http:          "SVC",
+  http:          "HTTP",
+  https:         "HTTPS",
 };
 
-export function SystemTopologyGraph({ system }: Props) {
+const OS_ICON: Record<string, string> = {
+  linux:   "🐧",
+  darwin:  "🍎",
+  windows: "🪟",
+};
+
+export function SystemTopologyGraph({ system, probeTopology }: Props) {
   const containerRef = useRef<HTMLDivElement>(null);
   const cyRef        = useRef<cytoscape.Core | null>(null);
 
   useEffect(() => {
     if (!containerRef.current) return;
     const cy = cytoscape({
-      container:          containerRef.current,
-      userZoomingEnabled: true,
-      userPanningEnabled: true,
+      container:           containerRef.current,
+      userZoomingEnabled:  true,
+      userPanningEnabled:  true,
       boxSelectionEnabled: false,
       minZoom: 0.2,
       maxZoom: 4,
@@ -74,6 +87,26 @@ export function SystemTopologyGraph({ system }: Props) {
             "color":              "#f1f5f9",
             "text-wrap":          "wrap",
             "text-max-width":     140,
+          },
+        },
+        // ── Probe host node ────────────────────────────────────────────────
+        {
+          selector: 'node[type="probe"]',
+          style: {
+            "shape":              "round-rectangle",
+            "background-color":   "#1c3a2f",
+            "border-color":       "#22c55e",
+            "border-width":       2,
+            "width":              160,
+            "height":             52,
+            "label":              "data(label)",
+            "text-valign":        "center",
+            "text-halign":        "center",
+            "font-family":        "ui-monospace, monospace",
+            "font-size":          10,
+            "color":              "#86efac",
+            "text-wrap":          "wrap",
+            "text-max-width":     145,
           },
         },
         // ── Sub-service node ───────────────────────────────────────────────
@@ -108,6 +141,16 @@ export function SystemTopologyGraph({ system }: Props) {
             "arrow-scale":        0.8,
           },
         },
+        // ── Probe edge (green) ─────────────────────────────────────────────
+        {
+          selector: 'edge[type="probe"]',
+          style: {
+            "line-color":         "#22c55e",
+            "target-arrow-color": "#22c55e",
+            "line-style":         "dashed",
+            "opacity":            0.6,
+          },
+        },
         // ── Down edge highlight ────────────────────────────────────────────
         {
           selector: 'edge[status="down"]',
@@ -134,13 +177,15 @@ export function SystemTopologyGraph({ system }: Props) {
     return () => { cy.destroy(); ro.disconnect(); };
   }, []);
 
-  // Rebuild graph whenever system data changes
+  // Rebuild graph whenever system or probe data changes
   useEffect(() => {
     const cy = cyRef.current;
     if (!cy) return;
 
     const rootStatus = system.health_status ?? "unknown";
-    const rootLabel  = system.name + "\n" + new URL(system.url).hostname;
+    const rootLabel  = system.name + "\n" + (() => {
+      try { return new URL(system.url).hostname; } catch { return system.url; }
+    })();
 
     const nodes: cytoscape.ElementDefinition[] = [
       {
@@ -156,11 +201,41 @@ export function SystemTopologyGraph({ system }: Props) {
 
     const edges: cytoscape.ElementDefinition[] = [];
 
+    const hasProbe    = !!probeTopology?.hostname;
+    const hasServices = system.sub_services.length > 0;
+
+    // ── Probe host node (middle tier) ────────────────────────────────────────
+    if (hasProbe) {
+      const osIcon   = OS_ICON[probeTopology!.os ?? ""] ?? "🖥";
+      const hostname = probeTopology!.hostname ?? "probe";
+      const arch     = probeTopology!.arch ?? "";
+      const os       = probeTopology!.os ?? "";
+      const probeLabel = `${osIcon} ${hostname}\n${os} · ${arch}`;
+
+      nodes.push({
+        data: {
+          id:    "probe",
+          type:  "probe",
+          label: probeLabel,
+        },
+      });
+
+      edges.push({
+        data: {
+          id:     "e_probe",
+          source: "root",
+          target: "probe",
+          type:   "probe",
+        },
+      });
+    }
+
+    // ── Sub-service nodes ────────────────────────────────────────────────────
+    const serviceParent = hasProbe ? "probe" : "root";
+
     for (const svc of system.sub_services) {
-      const nodeId = `svc_${svc.name}`;
-      const latencyStr = svc.latency_ms != null
-        ? `\n${svc.latency_ms.toFixed(0)} ms`
-        : "";
+      const nodeId     = `svc_${svc.name}`;
+      const latencyStr = svc.latency_ms != null ? `\n${svc.latency_ms.toFixed(0)} ms` : "";
       const kindTag    = KIND_LABEL[svc.kind] ?? "SVC";
       const label      = `[${kindTag}] ${svc.name}${latencyStr}`;
 
@@ -178,7 +253,7 @@ export function SystemTopologyGraph({ system }: Props) {
       edges.push({
         data: {
           id:     `e_${nodeId}`,
-          source: "root",
+          source: serviceParent,
           target: nodeId,
           status: svc.status,
         },
@@ -190,19 +265,20 @@ export function SystemTopologyGraph({ system }: Props) {
       cy.add([...nodes, ...edges]);
     });
 
-    const layout = system.sub_services.length === 0
+    const totalNodes = nodes.length;
+    const layout = totalNodes <= 1
       ? { name: "preset" as const }
       : {
-          name:       "breadthfirst" as const,
-          directed:   true,
-          padding:    40,
-          spacingFactor: 1.4,
-          avoidOverlap: true,
+          name:          "breadthfirst" as const,
+          directed:      true,
+          padding:       40,
+          spacingFactor: hasServices ? 1.4 : 1.8,
+          avoidOverlap:  true,
         };
 
     cy.layout(layout).run();
     cy.fit(undefined, 40);
-  }, [system]);
+  }, [system, probeTopology]);
 
   return (
     <div
