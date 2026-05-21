@@ -165,13 +165,10 @@ services:
       context: ../agent
       dockerfile: Dockerfile
     container_name: openwatch-agent
-    depends_on:
-      backend:
-        condition: service_healthy
     environment:
-      BACKEND_URL: http://localhost:8000
+      BACKEND_URL: https://openwatch-backend-production.up.railway.app
       EMIT_INTERVAL: "30"
-    network_mode: host   # needs host networking to discover local services
+    network_mode: host
     restart: unless-stopped
 
   dashboard:
@@ -179,9 +176,7 @@ services:
       context: ../dashboard
       dockerfile: Dockerfile
     container_name: openwatch-dashboard
-    depends_on:
-      backend:
-        condition: service_healthy
+    # No depends_on — dashboard uses the Railway backend, not the local stack
     environment:
       NEXT_PUBLIC_BACKEND_URL: https://openwatch-backend-production.up.railway.app
       NEXT_PUBLIC_WS_URL: wss://openwatch-backend-production.up.railway.app
