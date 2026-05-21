@@ -79,12 +79,18 @@ async def _process_livestate(redis, ws_manager, event: AgentEvent) -> None:
             continue
         key = SERVICE_KEY.format(service_id=svc.id)
         pipe.hset(key, mapping={
+            "id":            svc.id,
             "service_id":    svc.id,
             "name":          svc.name,
             "kind":          svc.kind.value,
+            "host":          svc.host,
+            "port":          svc.port,
+            "hostname":      event.hostname,
+            "agent_id":      event.agent_id,
             "health_status": svc.health.status.value,
             "latency_ms":    svc.health.latency_ms or 0,
             "checked_at":    svc.health.checked_at.isoformat() if svc.health.checked_at else "",
+            "last_seen":     event.timestamp.isoformat(),
         })
         pipe.expire(key, SERVICE_TTL_SECONDS)
         pipe.sadd(SERVICES_SET, svc.id)

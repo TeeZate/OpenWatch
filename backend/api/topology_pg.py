@@ -7,6 +7,8 @@
 
 from __future__ import annotations
 
+from datetime import datetime, timezone
+
 from fastapi import APIRouter, Request
 
 from db.postgres_topology import FETCH_TOPOLOGY_PG
@@ -32,19 +34,18 @@ async def get_topology(request: Request) -> TopologyResponse:
 
         if host_id not in seen_hosts:
             nodes.append(CytoscapeNode(data={
-                "id":     host_id,
-                "label":  hostname,
-                "kind":   "host",
-                "health": "unknown",
+                "id":    host_id,
+                "label": hostname,
+                "type":  "host",
             }))
             seen_hosts.add(host_id)
 
         nodes.append(CytoscapeNode(data={
-            "id":     svc_id,
-            "label":  row["name"] or row["kind"],
-            "kind":   row["kind"],
-            "health": "unknown",
-            "port":   row["port"],
+            "id":    svc_id,
+            "label": row["name"] or row["kind"],
+            "type":  "service",
+            "kind":  row["kind"],
+            "port":  row["port"],
         }))
         edges.append(CytoscapeEdge(data={
             "id":     f"{host_id}-{svc_id}",
@@ -52,4 +53,4 @@ async def get_topology(request: Request) -> TopologyResponse:
             "target": svc_id,
         }))
 
-    return TopologyResponse(nodes=nodes, edges=edges)
+    return TopologyResponse(nodes=nodes, edges=edges, generated_at=datetime.now(timezone.utc))
