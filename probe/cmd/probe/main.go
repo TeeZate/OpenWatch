@@ -107,7 +107,13 @@ func cmdStart(args []string) {
 	// Register with platform (idempotent — safe to call every startup)
 	log.Println("Registering with platform…")
 	if err := register.EnsureRegistered(cfg, fp, version); err != nil {
-		log.Fatalf("Registration failed: %v", err)
+		log.Printf("Registration failed: %v", err)
+		// Sleep before exit so Railway's restart policy doesn't spin into a
+		// tight crash loop. A 60-second delay gives the operator time to see
+		// the log and take action (revoke token, fix env vars, etc.).
+		log.Println("Waiting 60 s before exit to prevent restart storm…")
+		time.Sleep(60 * time.Second)
+		os.Exit(1)
 	}
 
 	// Build mTLS push client

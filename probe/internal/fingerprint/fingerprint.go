@@ -23,24 +23,37 @@ import (
 )
 
 // Compute returns the SHA-256 host fingerprint as a hex string.
+//
+// Priority:
+//  1. RAILWAY_SERVICE_ID  — stable across redeploys; changes only if the service
+//     is deleted and recreated. Used whenever the probe runs inside Railway.
+//  2. /etc/machine-id + first MAC + hostname — used on bare metal / VPS / Docker.
 func Compute() (string, error) {
 	h := sha256.New()
 
-	// ── /etc/machine-id ───────────────────────────────────────────────────────
+	// ── Railway: use stable service ID ───────────────────────────────────────
+	// RAILWAY_SERVICE_ID is the service UUID on Railway. It survives redeploys
+	// because Railway creates a new container for the same service, not a new
+	// service. /etc/machine-id is NOT stable — it regenerates per container.
+	if railwayID := os.Getenv("RAILWAY_SERVICE_ID"); railwayID != "" {
+		h.Write([]byte("railway:"))
+		h.Write([]byte(strings.TrimSpace(railwayID)))
+		return hex.EncodeToString(h.Sum(nil)), nil
+	}
+
+	// ── Bare metal / VPS / Docker: use hardware identifiers ──────────────────
 	machineID, err := readMachineID()
 	if err != nil {
-		// Not fatal — use empty string, other fields still bind the host
+		// Not fatal — use placeholder; other fields still bind the host
 		machineID = "no-machine-id"
 	}
 	h.Write([]byte(strings.TrimSpace(machineID)))
 	h.Write([]byte("|"))
 
-	// ── First non-loopback MAC address ────────────────────────────────────────
 	mac := firstMAC()
 	h.Write([]byte(mac))
 	h.Write([]byte("|"))
 
-	// ── Hostname ──────────────────────────────────────────────────────────────
 	hostname, _ := os.Hostname()
 	h.Write([]byte(hostname))
 
