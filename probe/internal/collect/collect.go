@@ -132,8 +132,18 @@ func collectOS() OSMetrics {
 		m.CPUPct = round2(cpuPcts[0])
 	}
 
-	// Memory
-	if vm, err := mem.VirtualMemory(); err == nil {
+	// Memory — prefer cgroup stats inside containers.
+	// /proc/meminfo reports the HOST's memory in Docker/Railway environments,
+	// making it look like the probe is running on a 270 GB machine.
+	// cgroup v2 and v1 expose the actual container limits and usage.
+	if usedBytes, totalBytes, ok := cgroupMemory(); ok {
+		m.MemUsedMB  = usedBytes / 1024 / 1024
+		m.MemTotalMB = totalBytes / 1024 / 1024
+		if totalBytes > 0 {
+			m.MemUsedPct = round2(float64(usedBytes) / float64(totalBytes) * 100)
+		}
+	} else if vm, err := mem.VirtualMemory(); err == nil {
+		// Fallback for bare metal / macOS dev machines.
 		m.MemUsedMB  = vm.Used / 1024 / 1024
 		m.MemTotalMB = vm.Total / 1024 / 1024
 		m.MemUsedPct = round2(vm.UsedPercent)
@@ -396,6 +406,51 @@ func tcpAddr(rawURL string, defaultPort int) (string, error) {
 		return rawURL, nil
 	}
 	return fmt.Sprintf("%s:%d", rawURL, defaultPort), nil
+}
+
+// ── cgroup memory helpers ─────────────────────────────────────────────────────
+
+// cgroupMemory reads container memory from cgroup v2, then cgroup v1.
+// Returns (usedBytes, limitBytes, ok). ok=false means no cgroup info found
+// and the caller should fall back to /proc/meminfo via gopsutil.
+func cgroupMemory() (uint64, uint64, bool) {
+	// ── cgroup v2 (modern kernels: systemd >= 243, Railway, most cloud) ───────
+	used, err1 := readCgroupUint64("/sys/fs/cgroup/memory.current")
+	limit, err2 := readCgroupUint64("/sys/fs/cgroup/memory.max")
+	if err1 == nil && err2 == nil && limit > 0 {
+		return used, limit, true
+	}
+
+	// ── cgroup v1 (older kernels, some Docker setups) ─────────────────────────
+	used, err1 = readCgroupUint64("/sys/fs/cgroup/memory/memory.usage_in_bytes")
+	limit, err2 = readCgroupUint64("/sys/fs/cgroup/memory/memory.limit_in_bytes")
+	if err1 == nil && err2 == nil && limit > 0 {
+		// cgroup v1 uses (1<<63)-4096 as "no limit" sentinel
+		const cgroupV1NoLimit = uint64(1<<63 - 4096)
+		if limit >= cgroupV1NoLimit {
+			return 0, 0, false // no hard limit — fall back to gopsutil
+		}
+		return used, limit, true
+	}
+
+	return 0, 0, false
+}
+
+// readCgroupUint64 reads a single uint64 from a cgroup file.
+// Returns an error if the file does not exist, is not readable, or contains
+// the special string "max" (which cgroup v2 uses for "unlimited").
+func readCgroupUint64(path string) (uint64, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return 0, err
+	}
+	s := strings.TrimSpace(string(data))
+	if s == "max" || s == "" {
+		return 0, fmt.Errorf("no limit")
+	}
+	var v uint64
+	_, err = fmt.Sscan(s, &v)
+	return v, err
 }
 
 func round2(f float64) float64 {
