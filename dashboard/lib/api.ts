@@ -85,8 +85,49 @@ async function get<T>(path: string): Promise<T> {
   return res.json() as Promise<T>;
 }
 
+// ── Monitored Systems ─────────────────────────────────────────────────────────
+
+export interface MonitoredSystem {
+  id: string;
+  name: string;
+  url: string;
+  added_at: string;
+  health_status?: string;
+  latency_ms?: number;
+  last_checked?: string;
+}
+
+export interface SystemsListResponse {
+  systems: MonitoredSystem[];
+  total: number;
+  max: number;
+}
+
+// ── Fetch helpers ─────────────────────────────────────────────────────────────
+
 export const fetchTopology   = ()  => get<TopologyResponse>("/api/v1/topology");
 export const fetchLiveHealth = ()  => get<LiveHealthResponse>("/api/v1/health/live");
 export const fetchRisks      = ()  => get<RisksResponse>("/api/v1/risks");
 export const fetchHistory    = (id: string, window = "1 hour") =>
   get(`/api/v1/health/history/${encodeURIComponent(id)}?window=${encodeURIComponent(window)}`);
+export const fetchSystems    = ()  => get<SystemsListResponse>("/api/v1/systems");
+
+export async function addSystem(name: string, url: string): Promise<{ id: string }> {
+  const res = await fetch(`${BASE}/api/v1/systems`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ name, url }),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ detail: res.statusText }));
+    throw new Error(err.detail ?? "Failed to add system");
+  }
+  return res.json();
+}
+
+export async function removeSystem(id: string): Promise<void> {
+  const res = await fetch(`${BASE}/api/v1/systems/${encodeURIComponent(id)}`, {
+    method: "DELETE",
+  });
+  if (!res.ok) throw new Error(`Delete failed: ${res.status}`);
+}
