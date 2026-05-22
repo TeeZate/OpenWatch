@@ -89,17 +89,22 @@ async def get_probe_config(
     if token_data.get("system_id") != system_id:
         raise HTTPException(status_code=403, detail="Token does not belong to this system")
 
-    # Return the discovery config from the DB
+    # Return the discovery config from the DB.
+    # service_url falls back to the system's own URL so API endpoint discovery
+    # works with zero configuration — the URL the admin typed when adding the
+    # system is almost always the API's base URL.
     async with pool.acquire() as conn:
         row = await conn.fetchrow(
-            "SELECT service_url, frontend_urls FROM systems WHERE id = $1", system_id
+            "SELECT url, service_url, frontend_urls FROM systems WHERE id = $1", system_id
         )
     if row is None:
         raise HTTPException(status_code=404, detail="System not found")
 
+    service_url = row["service_url"] or row["url"] or ""
+
     return {
-        "service_url":    row["service_url"]   or "",
-        "frontend_urls":  row["frontend_urls"] or "",
+        "service_url":   service_url.rstrip("/"),
+        "frontend_urls": row["frontend_urls"] or "",
     }
 
 

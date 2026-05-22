@@ -155,42 +155,54 @@ function DiscoveryConfigCard({ system }: { system: MonitoredSystem }) {
 
         {/* Service URL */}
         <div>
-          <label className="block text-[10px] font-semibold text-gray-500 uppercase tracking-wider mb-1">
-            API Service URL
-            <span className="ml-1 text-gray-600 normal-case font-normal tracking-normal">
-              (for OpenAPI endpoint discovery)
-            </span>
-          </label>
+          <div className="flex items-center gap-2 mb-1">
+            <label className="text-[10px] font-semibold text-gray-500 uppercase tracking-wider">
+              API Service URL
+            </label>
+            {!serviceUrl && (
+              <span className="text-[9px] px-1.5 py-0.5 rounded-full bg-blue-950/60 border border-blue-800/50 text-blue-400 font-medium">
+                auto — uses system URL
+              </span>
+            )}
+          </div>
           <input
             type="url"
             value={serviceUrl}
             onChange={(e) => setServiceUrl(e.target.value)}
-            placeholder="https://your-api.railway.app"
+            placeholder={`${system.url} (auto-detected)`}
             className="w-full bg-gray-950 border border-gray-700 rounded px-2.5 py-1.5 text-sm font-mono text-gray-200 placeholder-gray-600 focus:outline-none focus:border-blue-600 transition-colors"
           />
           <p className="mt-1 text-[10px] text-gray-600">
-            The probe will try <span className="font-mono text-gray-500">/openapi.json</span>,{" "}
-            <span className="font-mono text-gray-500">/api-docs</span> etc. to discover your endpoints.
+            Leave blank to use your system URL automatically. The probe tries{" "}
+            <span className="font-mono text-gray-500">/openapi.json</span>,{" "}
+            <span className="font-mono text-gray-500">/api-docs</span> etc. to discover endpoints.
           </p>
         </div>
 
         {/* Frontend URLs */}
         <div>
-          <label className="block text-[10px] font-semibold text-gray-500 uppercase tracking-wider mb-1">
-            Frontend URLs
-            <span className="ml-1 text-gray-600 normal-case font-normal tracking-normal">
-              (comma-separated, for synthetic checks + architecture map)
-            </span>
-          </label>
+          <div className="flex items-center gap-2 mb-1">
+            <label className="text-[10px] font-semibold text-gray-500 uppercase tracking-wider">
+              Frontend URLs
+            </label>
+            {!frontendUrls && (
+              <span className="text-[9px] px-1.5 py-0.5 rounded-full bg-green-950/60 border border-green-800/50 text-green-400 font-medium">
+                auto — discovered from CORS headers
+              </span>
+            )}
+          </div>
           <textarea
             rows={2}
             value={frontendUrls}
             onChange={(e) => setFrontendUrls(e.target.value)}
-            placeholder="https://app.example.com, https://dashboard.example.com"
+            placeholder="Auto-discovered from CORS headers & env vars — or enter manually"
             className="w-full bg-gray-950 border border-gray-700 rounded px-2.5 py-1.5 text-sm font-mono text-gray-200 placeholder-gray-600 focus:outline-none focus:border-blue-600 transition-colors resize-none"
           />
           <p className="mt-1 text-[10px] text-gray-600">
-            Each URL is pinged every 5 min and shown in the Architecture Map frontend layer.
+            Leave blank — the probe reads your{" "}
+            <span className="font-mono text-gray-500">CORS_ORIGIN</span> /{" "}
+            <span className="font-mono text-gray-500">ALLOWED_ORIGINS</span> env vars and live CORS
+            response headers automatically. Override only if auto-discovery misses a URL.
           </p>
         </div>
 

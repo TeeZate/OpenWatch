@@ -10,6 +10,8 @@
 package collect
 
 import (
+	"net/http"
+	"net/url"
 	"os"
 	"strings"
 	"time"
@@ -180,6 +182,137 @@ func detectHostingProvider() string {
 		}
 	}
 	return ""
+}
+
+// ── Zero-config auto-discovery ────────────────────────────────────────────────
+
+// AutoDiscoverServiceURL tries to find the base URL of the monitored API from
+// well-known environment variables injected by hosting providers. Returns ""
+// if nothing is found — the caller falls back to the platform-configured value.
+func AutoDiscoverServiceURL() string {
+	checks := []struct{ env, prefix string }{
+		// Railway injects RAILWAY_PUBLIC_DOMAIN for services with a public domain
+		{"RAILWAY_PUBLIC_DOMAIN", "https://"},
+		// Render sets this for web services
+		{"RENDER_EXTERNAL_URL", ""},
+		// Fly.io
+		{"FLY_PUBLIC_HOSTNAME", "https://"},
+		// Generic hosting patterns (values usually include the scheme already)
+		{"APP_URL", ""},
+		{"API_URL", ""},
+		{"PUBLIC_URL", ""},
+		{"BASE_URL", ""},
+		{"SERVICE_URL", ""},
+		{"SERVER_URL", ""},
+		{"BACKEND_URL", ""},
+		{"NEXT_PUBLIC_API_URL", ""},
+		{"VITE_API_URL", ""},
+		{"REACT_APP_API_URL", ""},
+	}
+	for _, c := range checks {
+		v := strings.TrimSpace(os.Getenv(c.env))
+		if v == "" {
+			continue
+		}
+		if c.prefix != "" && !strings.HasPrefix(v, "http") {
+			v = c.prefix + v
+		}
+		if strings.HasPrefix(v, "http") {
+			return strings.TrimRight(v, "/")
+		}
+	}
+	return ""
+}
+
+// DiscoverCORSOriginsFromService probes the given service URL with an HTTP
+// OPTIONS preflight request and returns any specific frontend origins advertised
+// in the Access-Control-Allow-Origin response header. Returns nil when the API
+// uses a wildcard (*), is unreachable, or returns no CORS headers at all.
+//
+// Additionally checks every value in corsEnvVars on the probe service itself —
+// if the admin copied e.g. CORS_ORIGIN from their app to the probe service,
+// those origins are collected here too.
+func DiscoverCORSOriginsFromService(serviceURL string) []string {
+	seen := map[string]bool{}
+	var origins []string
+
+	addOrigin := func(o string) {
+		o = strings.TrimSpace(o)
+		if o == "" || o == "*" || !strings.HasPrefix(o, "http") {
+			return
+		}
+		if !seen[o] {
+			seen[o] = true
+			origins = append(origins, o)
+		}
+	}
+
+	// ── 1. Live CORS headers from the service ─────────────────────────────────
+	if serviceURL != "" {
+		client := &http.Client{Timeout: 8 * time.Second}
+		// Send a preflight with a synthetic probe origin so we can see what the
+		// server reflects. Many frameworks echo back the origin when it matches
+		// their allowlist — we send a few plausible-looking patterns.
+		probeOrigins := []string{
+			"https://app.example.com",
+			"https://localhost",
+			"https://localhost:3000",
+		}
+		for _, probe := range probeOrigins {
+			req, err := http.NewRequest(http.MethodOptions, serviceURL, nil)
+			if err != nil {
+				break
+			}
+			req.Header.Set("Origin", probe)
+			req.Header.Set("Access-Control-Request-Method", "GET")
+			resp, err := client.Do(req)
+			if err != nil {
+				break
+			}
+			resp.Body.Close()
+			// If the server echoed back this specific origin it means their
+			// allowlist pattern matched — note it (it tells us CORS is configured
+			// but doesn't reveal the real origins).
+			// More useful: check the VARY header to know if origin-based CORS is active.
+			_ = resp.Header.Get("Vary")
+
+			// Some servers include an explicit allowlist in a custom header or
+			// embed it in error responses — but the most useful signal is simply
+			// checking the reflect pattern. We skip adding probe origins to the list.
+		}
+
+		// Make a plain GET and look at the allow-origin header value.
+		req, err := http.NewRequest(http.MethodGet, serviceURL, nil)
+		if err == nil {
+			req.Header.Set("User-Agent", "OpenWatch-Probe/1.0 (cors-discovery)")
+			if resp, err := client.Do(req); err == nil {
+				resp.Body.Close()
+				for _, val := range resp.Header.Values("Access-Control-Allow-Origin") {
+					for _, part := range strings.Split(val, ",") {
+						addOrigin(strings.TrimSpace(part))
+					}
+				}
+			}
+		}
+	}
+
+	// ── 2. CORS env vars on the probe service (values, not just keys) ─────────
+	// Frontend URLs are public information — safe to read and report.
+	for _, varName := range corsEnvVars {
+		val := os.Getenv(varName)
+		if val == "" {
+			continue
+		}
+		for _, part := range strings.Split(val, ",") {
+			part = strings.TrimSpace(part)
+			// Filter to http origins only; skip plain hostnames or paths
+			if u, err := url.Parse(part); err == nil && u.Scheme != "" && u.Host != "" {
+				addOrigin(part)
+			}
+		}
+	}
+
+	return origins
 }
 
 func detectRuntimeVersion() string {

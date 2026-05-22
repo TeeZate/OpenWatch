@@ -144,20 +144,63 @@ func Build(cfg *config.Config, fp string, seq int64, version string) (*Payload, 
 			p.Database = &db
 		}
 
-		// API schema — fetches /openapi.json from OPENWATCH_SERVICE_URL
+		// Architecture discovery — env-var based integration detection + CORS origins
+		arch := CollectArchitecture()
+		p.Architecture = &arch
+
+		// ── Zero-config service URL auto-discovery ────────────────────────────
+		// If no ServiceURL is configured (neither from remote config nor env var),
+		// try to discover it from well-known hosting provider env vars.
+		if cfg.ServiceURL == "" {
+			if discovered := AutoDiscoverServiceURL(); discovered != "" {
+				cfg.ServiceURL = discovered
+			}
+		}
+
+		// ── Zero-config frontend URL auto-discovery ───────────────────────────
+		// If no FrontendURLs are configured, build the list automatically from:
+		//   1. CORS origins found in env vars (already in arch.CORSOrigins)
+		//   2. CORS origins advertised by the live API via HTTP headers
+		// This means if the app has CORS_ORIGIN / ALLOWED_ORIGINS / CLIENT_URL
+		// set (even if only on the probe service via Railway shared vars), the
+		// probe discovers and checks frontends with zero manual configuration.
+		if len(cfg.FrontendURLs) == 0 {
+			var discovered []string
+			seen := map[string]bool{}
+
+			add := func(u string) {
+				u = strings.TrimSpace(u)
+				if u != "" && !seen[u] {
+					seen[u] = true
+					discovered = append(discovered, u)
+				}
+			}
+
+			// Source 1: CORS env vars already parsed by CollectArchitecture
+			for _, o := range arch.CORSOrigins {
+				add(o)
+			}
+
+			// Source 2: Live CORS headers + CORS env vars on probe
+			for _, o := range DiscoverCORSOriginsFromService(cfg.ServiceURL) {
+				add(o)
+			}
+
+			if len(discovered) > 0 {
+				cfg.FrontendURLs = discovered
+			}
+		}
+
+		// API schema — fetches /openapi.json from service URL (explicit or auto-discovered)
 		if cfg.ServiceURL != "" {
 			schema := CollectAPISchema(cfg.ServiceURL)
 			p.APISchema = &schema
 		}
 
-		// Synthetic frontend checks — OPENWATCH_FRONTEND_URLS
+		// Synthetic frontend checks — explicit config or auto-discovered above
 		if len(cfg.FrontendURLs) > 0 {
 			p.Synthetics = CollectSynthetics(cfg.FrontendURLs)
 		}
-
-		// Architecture discovery — env-var based integration detection
-		arch := CollectArchitecture()
-		p.Architecture = &arch
 	}
 
 	return p, nil
