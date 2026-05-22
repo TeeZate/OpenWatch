@@ -31,6 +31,7 @@ from db.redis_client import (
     PROBE_SEQ_KEY,
     PROBE_TOKEN_KEY,
     SERVICE_KEY,
+    SERVICE_TTL_SECONDS,
     SYSTEM_TOPO_KEY,
 )
 
@@ -470,7 +471,7 @@ async def _write_probe_data(system_id: str, payload: dict, redis) -> None:
     topo["probe_source"]  = True
     topo["health_status"] = _infer_overall_status(all_services)
     topo["updated_at"]    = now
-    await redis.set(topo_key, json.dumps(topo), ex=120)
+    await redis.set(topo_key, json.dumps(topo), ex=SERVICE_TTL_SECONDS * 4)  # 20 min
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────

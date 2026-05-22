@@ -255,9 +255,28 @@ async def probe_loop(app) -> None:
                 await redis.sadd(SERVICES_SET, system_id)
 
                 # ── Parse & store topology ─────────────────────────────────────
-                sub_services: list[dict] = []
-                if isinstance(result.get("body_json"), dict):
-                    sub_services = _parse_health_topology(result["body_json"])
+                # IMPORTANT: if a probe agent has already written rich sub_services
+                # (probe_source=True), preserve them — do not overwrite with the
+                # sparse data from the HTTP health check endpoint.  The prober only
+                # owns latency, status and path; the probe agent owns sub_services.
+                topo_key = SYSTEM_TOPO_KEY.format(system_id=system_id)
+
+                existing_raw = await redis.get(topo_key)
+                existing: dict = {}
+                if existing_raw:
+                    try:
+                        existing = json.loads(existing_raw)
+                    except Exception:
+                        pass
+
+                if existing.get("probe_source"):
+                    # Probe agent is the authority for sub_services — keep them.
+                    sub_services = existing.get("sub_services", [])
+                else:
+                    # No probe connected — use whatever the health endpoint returns.
+                    sub_services = []
+                    if isinstance(result.get("body_json"), dict):
+                        sub_services = _parse_health_topology(result["body_json"])
 
                 topo_payload = json.dumps({
                     "system_id":    system_id,
@@ -268,9 +287,9 @@ async def probe_loop(app) -> None:
                     "message":      result.get("message"),
                     "path":         result.get("path"),
                     "sub_services": sub_services,
+                    "probe_source": existing.get("probe_source", False),
                     "updated_at":   now,
                 })
-                topo_key = SYSTEM_TOPO_KEY.format(system_id=system_id)
                 await redis.set(topo_key, topo_payload, ex=SERVICE_TTL_SECONDS * 4)
 
                 logger.info(

@@ -14,7 +14,16 @@ export function useSystemDetail(systemId: string | null) {
     setLoading(true);
     try {
       const data = await fetchSystemDetail(systemId);
-      setDetail(data);
+      // Only update if we actually got richer data — never downgrade from a
+      // version that has sub_services to one that doesn't (stale-while-revalidate)
+      setDetail(prev => {
+        if (!prev) return data;
+        // If the new data has sub_services, always use it
+        if (data.sub_services.length > 0) return data;
+        // If the previous data had sub_services but new one is empty, keep the old
+        if (prev.sub_services.length > 0 && data.sub_services.length === 0) return prev;
+        return data;
+      });
       setError(null);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Failed to load system detail");
