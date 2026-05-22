@@ -95,6 +95,10 @@ export interface MonitoredSystem {
   health_status?: string;
   latency_ms?: number;
   last_checked?: string;
+  /** Base URL of the monitored API — used by the probe for OpenAPI discovery */
+  service_url?: string;
+  /** Comma-separated frontend URLs — used for synthetic checks + architecture map */
+  frontend_urls?: string;
 }
 
 export interface SystemsListResponse {
@@ -146,6 +150,22 @@ export async function removeSystem(id: string): Promise<void> {
     method: "DELETE",
   });
   if (!res.ok) throw new Error(`Delete failed: ${res.status}`);
+}
+
+export async function patchSystemConfig(
+  id: string,
+  serviceUrl: string,
+  frontendUrls: string,
+): Promise<void> {
+  const res = await fetch(`${BASE}/api/v1/systems/${encodeURIComponent(id)}/config`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ service_url: serviceUrl, frontend_urls: frontendUrls }),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ detail: res.statusText }));
+    throw new Error(err.detail ?? "Failed to save config");
+  }
 }
 
 // ── Probe tokens ──────────────────────────────────────────────────────────────

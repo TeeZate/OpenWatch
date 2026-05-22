@@ -58,6 +58,51 @@ async def get_ca_cert():
     return PlainTextResponse(get_ca_cert_pem(), media_type="application/x-pem-file")
 
 
+# ── GET /api/v1/systems/{system_id}/probe/config ─────────────────────────────
+
+@router.get("/systems/{system_id}/probe/config")
+async def get_probe_config(
+    system_id: str,
+    request:   Request,
+    x_token_id: str | None = Header(default=None),
+) -> dict:
+    """Return the remote discovery config for a probe.
+
+    Called by the probe on startup and every ~5 minutes to pick up
+    service_url and frontend_urls set by the admin in the dashboard.
+    Auth: the probe must send its token_id in the X-Token-ID header.
+    """
+    redis = request.app.state.redis
+    pool  = request.app.state.ts_pool
+
+    # Validate the token belongs to this system and is not revoked
+    if not x_token_id:
+        raise HTTPException(status_code=401, detail="X-Token-ID header required")
+
+    is_revoked = await redis.sismember(PROBE_REVOKED_SET, x_token_id)
+    if is_revoked:
+        raise HTTPException(status_code=401, detail="Token has been revoked")
+
+    token_data = await redis.hgetall(PROBE_TOKEN_KEY.format(token_id=x_token_id))
+    if not token_data:
+        raise HTTPException(status_code=401, detail="Token not found or expired")
+    if token_data.get("system_id") != system_id:
+        raise HTTPException(status_code=403, detail="Token does not belong to this system")
+
+    # Return the discovery config from the DB
+    async with pool.acquire() as conn:
+        row = await conn.fetchrow(
+            "SELECT service_url, frontend_urls FROM systems WHERE id = $1", system_id
+        )
+    if row is None:
+        raise HTTPException(status_code=404, detail="System not found")
+
+    return {
+        "service_url":    row["service_url"]   or "",
+        "frontend_urls":  row["frontend_urls"] or "",
+    }
+
+
 # ── GET /api/v1/systems/{system_id}/probe/status ─────────────────────────────
 
 @router.get("/systems/{system_id}/probe/status")

@@ -2,11 +2,12 @@
 // Business Source License 1.1
 // Copyright (c) 2026 OpenWatch
 
-import { useState } from "react";
+import { useState, useRef, useEffect } from "react";
 import { useProbeStatus }   from "@/hooks/useProbeStatus";
 import { useProbeTokens }   from "@/hooks/useProbeTokens";
 import { ConnectProbeModal }    from "./ConnectProbeModal";
 import { ProbeMetricsChart }    from "./ProbeMetricsChart";
+import { patchSystemConfig }    from "@/lib/api";
 import type { MonitoredSystem, ProbeToken } from "@/lib/api";
 
 interface Props {
@@ -100,6 +101,121 @@ function TokenRow({
           {isRevoking ? "Revoking…" : "Revoke"}
         </button>
       )}
+    </div>
+  );
+}
+
+// ── Discovery config card ──────────────────────────────────────────────────────
+
+function DiscoveryConfigCard({ system }: { system: MonitoredSystem }) {
+  const [serviceUrl,    setServiceUrl]    = useState(system.service_url    ?? "");
+  const [frontendUrls,  setFrontendUrls]  = useState(system.frontend_urls  ?? "");
+  const [saving,        setSaving]        = useState(false);
+  const [saved,         setSaved]         = useState(false);
+  const [error,         setError]         = useState<string | null>(null);
+  const savedTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // Sync if parent system object changes (e.g. after a page refetch)
+  useEffect(() => {
+    setServiceUrl(system.service_url   ?? "");
+    setFrontendUrls(system.frontend_urls ?? "");
+  }, [system.service_url, system.frontend_urls]);
+
+  const isDirty =
+    serviceUrl.trim()   !== (system.service_url   ?? "").trim() ||
+    frontendUrls.trim() !== (system.frontend_urls ?? "").trim();
+
+  async function handleSave() {
+    setSaving(true);
+    setError(null);
+    try {
+      await patchSystemConfig(system.id, serviceUrl.trim(), frontendUrls.trim());
+      setSaved(true);
+      if (savedTimerRef.current) clearTimeout(savedTimerRef.current);
+      savedTimerRef.current = setTimeout(() => setSaved(false), 3000);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Save failed");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <div className="mt-4">
+      <div className="flex items-center gap-2 mb-2">
+        <p className="text-[10px] font-bold text-gray-500 uppercase tracking-widest">
+          Discovery Config
+        </p>
+        <span className="text-[10px] text-gray-600 font-normal normal-case tracking-normal">
+          — set once, probe picks up changes automatically
+        </span>
+      </div>
+
+      <div className="bg-gray-900/40 border border-gray-800 rounded-lg p-3 space-y-3">
+
+        {/* Service URL */}
+        <div>
+          <label className="block text-[10px] font-semibold text-gray-500 uppercase tracking-wider mb-1">
+            API Service URL
+            <span className="ml-1 text-gray-600 normal-case font-normal tracking-normal">
+              (for OpenAPI endpoint discovery)
+            </span>
+          </label>
+          <input
+            type="url"
+            value={serviceUrl}
+            onChange={(e) => setServiceUrl(e.target.value)}
+            placeholder="https://your-api.railway.app"
+            className="w-full bg-gray-950 border border-gray-700 rounded px-2.5 py-1.5 text-sm font-mono text-gray-200 placeholder-gray-600 focus:outline-none focus:border-blue-600 transition-colors"
+          />
+          <p className="mt-1 text-[10px] text-gray-600">
+            The probe will try <span className="font-mono text-gray-500">/openapi.json</span>,{" "}
+            <span className="font-mono text-gray-500">/api-docs</span> etc. to discover your endpoints.
+          </p>
+        </div>
+
+        {/* Frontend URLs */}
+        <div>
+          <label className="block text-[10px] font-semibold text-gray-500 uppercase tracking-wider mb-1">
+            Frontend URLs
+            <span className="ml-1 text-gray-600 normal-case font-normal tracking-normal">
+              (comma-separated, for synthetic checks + architecture map)
+            </span>
+          </label>
+          <textarea
+            rows={2}
+            value={frontendUrls}
+            onChange={(e) => setFrontendUrls(e.target.value)}
+            placeholder="https://app.example.com, https://dashboard.example.com"
+            className="w-full bg-gray-950 border border-gray-700 rounded px-2.5 py-1.5 text-sm font-mono text-gray-200 placeholder-gray-600 focus:outline-none focus:border-blue-600 transition-colors resize-none"
+          />
+          <p className="mt-1 text-[10px] text-gray-600">
+            Each URL is pinged every 5 min and shown in the Architecture Map frontend layer.
+          </p>
+        </div>
+
+        {/* Save row */}
+        <div className="flex items-center justify-between pt-1">
+          <div className="text-[11px]">
+            {error && <span className="text-red-400">{error}</span>}
+            {saved && !error && (
+              <span className="text-green-400 flex items-center gap-1">
+                <svg className="w-3 h-3" viewBox="0 0 20 20" fill="currentColor">
+                  <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd"/>
+                </svg>
+                Saved — probe will pick this up within 5 minutes
+              </span>
+            )}
+          </div>
+          <button
+            onClick={handleSave}
+            disabled={saving || !isDirty}
+            className="px-3 py-1.5 rounded bg-blue-600 hover:bg-blue-500 disabled:bg-gray-800 disabled:text-gray-600 text-white text-xs font-semibold transition-colors"
+          >
+            {saving ? "Saving…" : "Save Config"}
+          </button>
+        </div>
+      </div>
     </div>
   );
 }
@@ -288,6 +404,9 @@ export function ProbePanel({ system }: Props) {
           </div>
         </div>
       )}
+
+      {/* ── Discovery config ──────────────────────────────────────────────────── */}
+      <DiscoveryConfigCard system={system} />
 
       {/* ── Connect modal ─────────────────────────────────────────────────────── */}
       {showModal && (

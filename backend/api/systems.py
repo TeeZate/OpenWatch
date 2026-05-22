@@ -24,7 +24,14 @@ from db.redis_client import (
     SYSTEM_TOPO_KEY,
 )
 from db.probe_tokens import SELECT_TOKENS_FOR_SYSTEM
-from db.systems import COUNT_SYSTEMS, DELETE_SYSTEM, INSERT_SYSTEM, SELECT_ALL_SYSTEMS
+from db.systems import (
+    COUNT_SYSTEMS,
+    DELETE_SYSTEM,
+    INSERT_SYSTEM,
+    SELECT_ALL_SYSTEMS,
+    SELECT_SYSTEM_BY_ID,
+    UPDATE_SYSTEM_CONFIG,
+)
 
 MAX_SYSTEMS = 10
 
@@ -36,14 +43,21 @@ class AddSystemRequest(BaseModel):
     url: str
 
 
+class SystemConfigRequest(BaseModel):
+    service_url:   str = ""
+    frontend_urls: str = ""   # comma-separated list
+
+
 class SystemResponse(BaseModel):
     id: str
     name: str
     url: str
     added_at: str
-    health_status: Optional[str] = None
-    latency_ms: Optional[float] = None
-    last_checked: Optional[str] = None
+    health_status:  Optional[str]   = None
+    latency_ms:     Optional[float] = None
+    last_checked:   Optional[str]   = None
+    service_url:    str             = ""
+    frontend_urls:  str             = ""
 
 
 class SystemsListResponse(BaseModel):
@@ -72,6 +86,8 @@ async def list_systems(request: Request) -> SystemsListResponse:
             health_status=raw.get("health_status") if raw else None,
             latency_ms=float(latency) if latency else None,
             last_checked=raw.get("checked_at") if raw else None,
+            service_url=row["service_url"] or "",
+            frontend_urls=row["frontend_urls"] or "",
         ))
 
     return SystemsListResponse(systems=systems, total=len(systems), max=MAX_SYSTEMS)
@@ -101,6 +117,30 @@ async def add_system(body: AddSystemRequest, request: Request) -> dict:
     return {"id": system_id, "name": name, "url": url, "message": "System added. First probe within 30 seconds."}
 
 
+@router.patch("/systems/{system_id}/config", status_code=200)
+async def update_system_config(
+    system_id: str,
+    body: SystemConfigRequest,
+    request: Request,
+) -> dict:
+    """Update the discovery config for a system (service URL + frontend URLs).
+
+    These values are fetched by the probe on startup and every ~5 minutes,
+    so the admin only needs to set OPENWATCH_TOKEN_JSON on the probe service —
+    no other Railway env vars are required.
+    """
+    pool = request.app.state.ts_pool
+    service_url   = body.service_url.strip().rstrip("/")
+    frontend_urls = body.frontend_urls.strip()
+
+    async with pool.acquire() as conn:
+        row = await conn.fetchrow(UPDATE_SYSTEM_CONFIG, system_id, service_url, frontend_urls)
+    if row is None:
+        raise HTTPException(status_code=404, detail="System not found")
+
+    return {"updated": system_id, "service_url": service_url, "frontend_urls": frontend_urls}
+
+
 @router.get("/systems/{system_id}")
 async def get_system(system_id: str, request: Request) -> dict:
     """Full detail for a single monitored system, including topology."""
@@ -109,9 +149,7 @@ async def get_system(system_id: str, request: Request) -> dict:
 
     # Fetch from DB
     async with pool.acquire() as conn:
-        row = await conn.fetchrow(
-            "SELECT id, name, url, added_at FROM systems WHERE id = $1", system_id
-        )
+        row = await conn.fetchrow(SELECT_SYSTEM_BY_ID, system_id)
     if row is None:
         raise HTTPException(status_code=404, detail="System not found")
 
@@ -129,17 +167,19 @@ async def get_system(system_id: str, request: Request) -> dict:
 
     latency = raw.get("latency_ms") if raw else None
     return {
-        "id":           row["id"],
-        "name":         row["name"],
-        "url":          row["url"],
-        "added_at":     row["added_at"].isoformat(),
+        "id":            row["id"],
+        "name":          row["name"],
+        "url":           row["url"],
+        "added_at":      row["added_at"].isoformat(),
         "health_status": raw.get("health_status") if raw else None,
-        "latency_ms":   float(latency) if latency else None,
-        "last_checked": raw.get("checked_at") if raw else None,
-        "message":      topo.get("message"),
-        "probe_path":   topo.get("path"),
-        "sub_services": topo.get("sub_services", []),
-        "updated_at":   topo.get("updated_at"),
+        "latency_ms":    float(latency) if latency else None,
+        "last_checked":  raw.get("checked_at") if raw else None,
+        "service_url":   row["service_url"] or "",
+        "frontend_urls": row["frontend_urls"] or "",
+        "message":       topo.get("message"),
+        "probe_path":    topo.get("path"),
+        "sub_services":  topo.get("sub_services", []),
+        "updated_at":    topo.get("updated_at"),
     }
 
 

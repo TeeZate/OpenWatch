@@ -116,6 +116,16 @@ func cmdStart(args []string) {
 		os.Exit(1)
 	}
 
+	// Fetch remote discovery config from platform (service_url, frontend_urls).
+	// Non-fatal — probe runs fine without it (env vars remain the fallback).
+	log.Println("Fetching remote discovery config…")
+	if err := config.FetchRemoteConfig(cfg); err != nil {
+		log.Printf("Remote config unavailable (using env vars): %v", err)
+	} else {
+		log.Printf("Remote config loaded — ServiceURL=%q  FrontendURLs=%v",
+			cfg.ServiceURL, cfg.FrontendURLs)
+	}
+
 	// Build mTLS push client
 	client, err := push.NewClient(cfg)
 	if err != nil {
@@ -135,6 +145,15 @@ func runLoop(cfg *config.Config, client *push.Client, fp string) {
 
 	for {
 		startTime := time.Now()
+
+		// Refresh remote config on the same cadence as extended collectors (~5 min).
+		// This lets the admin update ServiceURL / FrontendURLs from the dashboard
+		// without redeploying or changing any Railway env vars.
+		if seq > 0 && seq%collect.ExtendedEvery == 0 {
+			if err := config.FetchRemoteConfig(cfg); err != nil {
+				log.Printf("Remote config refresh failed (continuing with cached): %v", err)
+			}
+		}
 
 		payload, err := collect.Build(cfg, fp, seq, version)
 		if err != nil {

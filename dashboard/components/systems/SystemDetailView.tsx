@@ -404,8 +404,8 @@ export function SystemDetailView({ system, onBack }: Props) {
               <div className="rounded-lg border border-gray-800 bg-gray-900/30 px-4 py-3 space-y-2">
                 <p className="text-sm text-gray-400 font-semibold">API schema not yet collected</p>
                 <p className="text-xs text-gray-600">
-                  Set <span className="font-mono text-yellow-400">OPENWATCH_SERVICE_URL</span>=https://your-api.railway.app
-                  in the probe service Railway variables to enable endpoint discovery.
+                  Set the <span className="font-mono text-yellow-400">API Service URL</span> in the
+                  Discovery Config section below — the probe will pick it up automatically within 5 minutes.
                 </p>
               </div>
             )}

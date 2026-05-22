@@ -25,8 +25,11 @@ package config
 import (
 	"encoding/json"
 	"fmt"
+	"io"
+	"net/http"
 	"os"
 	"strings"
+	"time"
 )
 
 // TokenConfig holds the capability token downloaded from the OpenWatch platform.
@@ -156,6 +159,67 @@ func normalizePEM(pem string) string {
 	}
 	pem = strings.ReplaceAll(pem, `\n`, "\n")
 	return strings.TrimSpace(pem)
+}
+
+// FetchRemoteConfig fetches the discovery config (service_url, frontend_urls)
+// from the OpenWatch platform. The probe calls this on startup and periodically
+// so the admin can update these from the dashboard without touching Railway variables.
+//
+// Errors are non-fatal: if the platform is unreachable the probe keeps running
+// with its existing (env-var-sourced) config.
+func FetchRemoteConfig(cfg *Config) error {
+	url := fmt.Sprintf(
+		"%s/api/v1/systems/%s/probe/config",
+		strings.TrimRight(cfg.Token.PlatformURL, "/"),
+		cfg.Token.SystemID,
+	)
+
+	req, err := http.NewRequest(http.MethodGet, url, nil)
+	if err != nil {
+		return fmt.Errorf("build request: %w", err)
+	}
+	req.Header.Set("X-Token-ID", cfg.Token.TokenID)
+
+	client := &http.Client{Timeout: 10 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		return fmt.Errorf("fetch remote config: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("remote config returned %d", resp.StatusCode)
+	}
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return fmt.Errorf("read remote config body: %w", err)
+	}
+
+	var remote struct {
+		ServiceURL   string `json:"service_url"`
+		FrontendURLs string `json:"frontend_urls"`
+	}
+	if err := json.Unmarshal(body, &remote); err != nil {
+		return fmt.Errorf("parse remote config: %w", err)
+	}
+
+	// Only override if the platform has values set — env vars remain the fallback
+	if remote.ServiceURL != "" {
+		cfg.ServiceURL = strings.TrimRight(remote.ServiceURL, "/")
+	}
+	if remote.FrontendURLs != "" {
+		urls := strings.Split(remote.FrontendURLs, ",")
+		cfg.FrontendURLs = cfg.FrontendURLs[:0] // clear, keep capacity
+		for _, u := range urls {
+			u = strings.TrimSpace(u)
+			if u != "" {
+				cfg.FrontendURLs = append(cfg.FrontendURLs, u)
+			}
+		}
+	}
+
+	return nil
 }
 
 // autoDiscoverServices checks for well-known environment variables and adds
