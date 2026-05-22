@@ -22,3 +22,4 @@ dashboard/.turbo/
 # OS
 .DS_Store
 Thumbs.db
+probe/openwatch-probe-linux-amd64
