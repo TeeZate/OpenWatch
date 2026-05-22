@@ -37,9 +37,10 @@ export function useSystems() {
   }, [load]);
 
   const add = useCallback(
-    async (name: string, url: string) => {
-      await apiAdd(name, url);
+    async (name: string, url: string): Promise<{ id: string }> => {
+      const result = await apiAdd(name, url);
       await load();
+      return result;
     },
     [load]
   );

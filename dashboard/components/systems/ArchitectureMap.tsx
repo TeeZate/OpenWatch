@@ -9,25 +9,26 @@ import type {
   ProbeStatusResponse,
   ProbeExtendedData,
   APIEndpoint,
+  FrontendPageInfo,
 } from "@/lib/api";
 
 // ── Layout constants ──────────────────────────────────────────────────────────
 
 const W  = 1400;  // SVG viewBox width
-const H  = 800;   // SVG viewBox height
+const H  = 860;   // SVG viewBox height
 const PAD = 44;   // horizontal padding
 
 const LAYER = {
   clients:   { y: 22,  h: 88  },
-  frontends: { y: 158, h: 100 },
-  api:       { y: 310, h: 200 },
-  infra:     { y: 566, h: 115 },
+  frontends: { y: 158, h: 140 },   // taller — fits framework + page breakdown
+  api:       { y: 350, h: 210 },
+  infra:     { y: 616, h: 120 },
 };
 
 const NODE_W = {
   client:   176,
-  frontend: 196,
-  infra:    176,
+  frontend: 210,   // slightly wider for page info
+  infra:    184,
 };
 
 // ── Colours ───────────────────────────────────────────────────────────────────
@@ -156,7 +157,7 @@ export function ArchitectureMap({ system, status, extended }: Props) {
   // ── Build node data ─────────────────────────────────────────────────────────
 
   const {
-    clients, frontends, routeGroups, infraNodes, edges,
+    clients, frontends, routeGroups, infraNodes, edges, totalEndpoints,
   } = useMemo(() => {
 
     // CLIENT nodes
@@ -169,7 +170,12 @@ export function ArchitectureMap({ system, status, extended }: Props) {
     if (hasMerchants) clientNodes.push({ id: "merchants", label: "🏪  Merchants", sub: "API Key Holders", detail: "Dashboard · Endpoints" });
     if (hasAdmin)     clientNodes.push({ id: "admin",     label: "🛡  Admin",     sub: "Internal only",  detail: "IP-restricted" });
 
-    // FRONTEND nodes — CORS origins + synthetic checks (deduped)
+    // FRONTEND nodes — CORS origins + synthetic checks (deduped) + page info
+    const fePageMap = new Map<string, FrontendPageInfo>();
+    for (const fp of (extended?.frontends ?? [])) {
+      try { fePageMap.set(new URL(fp.url).hostname, fp); } catch { /* ignore */ }
+    }
+
     const frontendMap = new Map<string, { url: string; status: string; latency?: number }>();
     for (const origin of (arch?.cors_origins ?? [])) {
       try { frontendMap.set(new URL(origin).hostname, { url: origin, status: "unknown" }); } catch { /* ignore */ }
@@ -177,13 +183,20 @@ export function ArchitectureMap({ system, status, extended }: Props) {
     for (const s of synths) {
       try { frontendMap.set(new URL(s.url).hostname, { url: s.url, status: s.status, latency: s.latency_ms }); } catch { /* ignore */ }
     }
-    const frontendNodes = Array.from(frontendMap.entries()).map(([host, info]) => ({
-      id:      `fe-${host}`,
-      label:   host,
-      url:     info.url,
-      status:  info.status,
-      latency: info.latency,
-    }));
+    const frontendNodes = Array.from(frontendMap.entries()).map(([host, info]) => {
+      const pages = fePageMap.get(host);
+      return {
+        id:        `fe-${host}`,
+        label:     host,
+        url:       info.url,
+        status:    info.status,
+        latency:   info.latency,
+        framework: pages?.framework ?? "",
+        totalPages:     pages?.total_pages     ?? null,
+        publicPages:    pages?.public_pages    ?? null,
+        protectedPages: pages?.protected_pages ?? null,
+      };
+    });
 
     // ROUTE GROUP nodes (inside API layer)
     const tagMap = new Map<string, APIEndpoint[]>();
@@ -208,15 +221,25 @@ export function ArchitectureMap({ system, status, extended }: Props) {
     for (const svc of subServices) {
       const k = svc.kind.toLowerCase();
       if (k.includes("database") || k.includes("postgres") || k.includes("sql") || k.includes("mongo")) {
-        infra.push({ id: `svc-${svc.name}`, name: svc.name, kind: "database", icon: "🗄", sub: svc.kind, status: svc.status, latency: svc.latency_ms });
+        // Enrich DB sub with table count + size from extended data if available
+        let dbSub = svc.kind;
+        if (db?.connected) {
+          const tableCount = db.tables?.length ?? 0;
+          const dbSizeMB   = db.size_bytes ? (db.size_bytes / 1_048_576).toFixed(1) : null;
+          dbSub = dbSizeMB ? `${tableCount} tables · ${dbSizeMB} MB` : `${tableCount} tables`;
+        }
+        infra.push({ id: `svc-${svc.name}`, name: svc.name, kind: "database", icon: "🗄", sub: dbSub, status: svc.status, latency: svc.latency_ms });
       } else if (k.includes("redis") || k.includes("cache")) {
-        infra.push({ id: `svc-${svc.name}`, name: svc.name, kind: "cache",    icon: "⚡", sub: svc.kind, status: svc.status, latency: svc.latency_ms });
+        infra.push({ id: `svc-${svc.name}`, name: svc.name, kind: "cache",    icon: "⚡", sub: "in-memory cache", status: svc.status, latency: svc.latency_ms });
       }
     }
 
     // If DB from extended schema and not already listed
     if (db?.connected && !infra.find(n => n.kind === "database")) {
-      infra.push({ id: "db-main", name: db.db_name ?? "PostgreSQL", kind: "database", icon: "🗄", sub: `${db.tables?.length ?? 0} tables`, status: "up" });
+      const tableCount = db.tables?.length ?? 0;
+      const dbSizeMB   = db.size_bytes ? (db.size_bytes / 1_048_576).toFixed(1) : null;
+      const dbSub      = dbSizeMB ? `${tableCount} tables · ${dbSizeMB} MB` : `${tableCount} tables`;
+      infra.push({ id: "db-main", name: db.db_name ?? "PostgreSQL", kind: "database", icon: "🗄", sub: dbSub, status: "up" });
     }
 
     // External integrations from arch discovery
@@ -256,14 +279,17 @@ export function ArchitectureMap({ system, status, extended }: Props) {
       edges_.push({ from: "api", to: n.id, color: col, dashed: false });
     }
 
+    const totalEndpoints = schema?.endpoints?.length ?? 0;
+
     return {
-      clients:    clientNodes,
-      frontends:  frontendNodes,
-      routeGroups: groups,
-      infraNodes: infra,
-      edges:      edges_,
+      clients:       clientNodes,
+      frontends:     frontendNodes,
+      routeGroups:   groups,
+      infraNodes:    infra,
+      edges:         edges_,
+      totalEndpoints,
     };
-  }, [system, arch, schema, synths, db]);
+  }, [system, arch, schema, synths, db, extended]);
 
   // ── Calculate positions ─────────────────────────────────────────────────────
 
@@ -305,7 +331,7 @@ export function ArchitectureMap({ system, status, extended }: Props) {
 
   // ── Route group layout inside API box ──────────────────────────────────────
   const RG_PAD   = 14;
-  const RG_H     = LAYER.api.h - 36;
+  const RG_H     = LAYER.api.h - 60;  // leave room for the taller header
   const rgCount  = routeGroups.length;
   const RG_W     = rgCount > 0
     ? Math.min(220, Math.floor((API_W - 2 * RG_PAD - (rgCount - 1) * 10) / rgCount))
@@ -396,22 +422,64 @@ export function ArchitectureMap({ system, status, extended }: Props) {
         {frontendPositions.map((pos) => {
           const node = frontends.find(n => n.id === pos.id)!;
           const sc   = C.frontend[node.status as keyof typeof C.frontend] ?? C.frontend.unknown;
+          const hasPages = node.totalPages != null && node.totalPages > 0;
           return (
             <g key={pos.id}>
               <rect x={pos.x} y={pos.y} width={NODE_W.frontend} height={LAYER.frontends.h}
                 rx={10} fill={sc.bg} stroke={sc.border} strokeWidth={1.5} />
               <rect x={pos.x} y={pos.y} width={NODE_W.frontend} height={4} rx={2} fill={sc.border} />
-              <text x={pos.x + NODE_W.frontend / 2} y={pos.y + 26}
+
+              {/* Hostname */}
+              <text x={pos.x + NODE_W.frontend / 2} y={pos.y + 24}
                 fontSize={10} fontWeight={700} fill={sc.title} textAnchor="middle">{node.label}</text>
-              <text x={pos.x + NODE_W.frontend / 2} y={pos.y + 44}
-                fontSize={7.5} fill="#475569" textAnchor="middle">{node.url}</text>
-              {node.latency != null && (
-                <text x={pos.x + NODE_W.frontend / 2} y={pos.y + 62}
-                  fontSize={8} fill="#475569" textAnchor="middle" fontFamily="ui-monospace,monospace">
-                  {node.latency.toFixed(0)} ms · {node.status}
+
+              {/* Framework badge */}
+              {node.framework ? (
+                <text x={pos.x + NODE_W.frontend / 2} y={pos.y + 40}
+                  fontSize={8} fill="#6366f1" textAnchor="middle" fontWeight={600}>
+                  {node.framework}
                 </text>
+              ) : (
+                <text x={pos.x + NODE_W.frontend / 2} y={pos.y + 40}
+                  fontSize={7.5} fill="#334155" textAnchor="middle">detecting framework…</text>
               )}
-              {/* status dot */}
+
+              {/* Page breakdown */}
+              {hasPages ? (
+                <>
+                  <text x={pos.x + NODE_W.frontend / 2} y={pos.y + 58}
+                    fontSize={8} fill="#94a3b8" textAnchor="middle">
+                    {node.totalPages} pages discovered
+                  </text>
+                  <text x={pos.x + NODE_W.frontend / 2} y={pos.y + 73}
+                    fontSize={7.5} textAnchor="middle">
+                    <tspan fill="#22c55e">● {node.publicPages} public</tspan>
+                    {"  "}
+                    <tspan fill="#f59e0b">🔒 {node.protectedPages} auth</tspan>
+                  </text>
+                </>
+              ) : (
+                <text x={pos.x + NODE_W.frontend / 2} y={pos.y + 63}
+                  fontSize={7.5} fill="#334155" textAnchor="middle">pages collecting…</text>
+              )}
+
+              {/* Latency + status */}
+              <text x={pos.x + NODE_W.frontend / 2} y={pos.y + 92}
+                fontSize={7.5} fill="#475569" textAnchor="middle" fontFamily="ui-monospace,monospace">
+                {node.latency != null ? `${node.latency.toFixed(0)} ms · ` : ""}{node.status}
+              </text>
+
+              {/* Divider line */}
+              <line x1={pos.x + 12} y1={pos.y + 100} x2={pos.x + NODE_W.frontend - 12} y2={pos.y + 100}
+                stroke="#1e293b" strokeWidth={1} />
+
+              {/* URL at bottom */}
+              <text x={pos.x + NODE_W.frontend / 2} y={pos.y + 116}
+                fontSize={6.5} fill="#334155" textAnchor="middle">
+                {node.url.length > 34 ? node.url.slice(0, 34) + "…" : node.url}
+              </text>
+
+              {/* Status dot */}
               <circle cx={pos.x + NODE_W.frontend - 14} cy={pos.y + 16} r={4}
                 fill={sc.border} opacity={0.8} />
             </g>
@@ -435,6 +503,15 @@ export function ArchitectureMap({ system, status, extended }: Props) {
           <text x={API_X + (hosting ? 120 : 18)} y={LAYER.api.y + 38}
             fontSize={8} fill="#475569">{runtime}</text>
         )}
+        {/* Endpoint count badge */}
+        {totalEndpoints > 0 && (
+          <text x={API_X + 18} y={LAYER.api.y + 50}
+            fontSize={7.5} fill="#475569">
+            <tspan fill="#6366f1" fontWeight={600}>{totalEndpoints}</tspan>
+            {" endpoints"}
+            {schema?.version ? <tspan fill="#334155">  ·  v{schema.version}</tspan> : null}
+          </text>
+        )}
         {/* system URL */}
         <text x={API_X + API_W - 18} y={LAYER.api.y + 24}
           fontSize={8} fill="#334155" textAnchor="end">
@@ -444,7 +521,7 @@ export function ArchitectureMap({ system, status, extended }: Props) {
         {/* ── ROUTE GROUP sub-boxes ────────────────────────────────────── */}
         {rgCount > 0 && routeGroups.map((rg, i) => {
           const rx_ = API_X + RG_PAD + i * (RG_W + rgGap);
-          const ry_ = LAYER.api.y + 48;
+          const ry_ = LAYER.api.y + 58;
           const displayEps = rg.endpoints.slice(0, 4);
           return (
             <g key={rg.tag}>

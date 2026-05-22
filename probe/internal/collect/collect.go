@@ -49,6 +49,7 @@ type Payload struct {
 	APISchema    *APISchemaInfo    `json:"api_schema,omitempty"`
 	Synthetics   []SyntheticResult `json:"synthetics,omitempty"`
 	Architecture *ArchitectureInfo `json:"architecture,omitempty"`
+	Frontends    []FrontendInfo    `json:"frontends,omitempty"`
 }
 
 // ExtendedEvery controls how often the heavy collectors run.
@@ -200,6 +201,9 @@ func Build(cfg *config.Config, fp string, seq int64, version string) (*Payload, 
 		// Synthetic frontend checks — explicit config or auto-discovered above
 		if len(cfg.FrontendURLs) > 0 {
 			p.Synthetics = CollectSynthetics(cfg.FrontendURLs)
+
+			// Deep frontend page discovery — pages, auth requirements, framework
+			p.Frontends = CollectFrontendPages(cfg.FrontendURLs)
 		}
 	}
 

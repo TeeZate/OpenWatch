@@ -3,7 +3,8 @@
 // Change Date: Four years from the release date of this file
 // Change License: Apache License, Version 2.0
 
-const BASE = process.env.NEXT_PUBLIC_BACKEND_URL ?? "http://localhost:8000";
+const BASE    = process.env.NEXT_PUBLIC_BACKEND_URL ?? "http://localhost:8000";
+const OW_KEY  = process.env.NEXT_PUBLIC_OW_KEY ?? "";
 
 export const WS_URL =
   (process.env.NEXT_PUBLIC_WS_URL ?? "ws://localhost:8000") + "/ws/live";
@@ -79,8 +80,18 @@ export interface RisksResponse {
 
 // ── Fetch helpers ─────────────────────────────────────────────────────────────
 
+/** Common headers sent on every management request to the backend. */
+function authHeaders(): Record<string, string> {
+  const h: Record<string, string> = {};
+  if (OW_KEY) h["X-OW-Key"] = OW_KEY;
+  return h;
+}
+
 async function get<T>(path: string): Promise<T> {
-  const res = await fetch(`${BASE}${path}`, { cache: "no-store" });
+  const res = await fetch(`${BASE}${path}`, {
+    cache: "no-store",
+    headers: authHeaders(),
+  });
   if (!res.ok) throw new Error(`${path} → ${res.status}`);
   return res.json() as Promise<T>;
 }
@@ -135,7 +146,7 @@ export const fetchSystemDetail = (id: string) => get<SystemDetail>(`/api/v1/syst
 export async function addSystem(name: string, url: string): Promise<{ id: string }> {
   const res = await fetch(`${BASE}/api/v1/systems`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: { "Content-Type": "application/json", ...authHeaders() },
     body: JSON.stringify({ name, url }),
   });
   if (!res.ok) {
@@ -148,6 +159,7 @@ export async function addSystem(name: string, url: string): Promise<{ id: string
 export async function removeSystem(id: string): Promise<void> {
   const res = await fetch(`${BASE}/api/v1/systems/${encodeURIComponent(id)}`, {
     method: "DELETE",
+    headers: authHeaders(),
   });
   if (!res.ok) throw new Error(`Delete failed: ${res.status}`);
 }
@@ -159,7 +171,7 @@ export async function patchSystemConfig(
 ): Promise<void> {
   const res = await fetch(`${BASE}/api/v1/systems/${encodeURIComponent(id)}/config`, {
     method: "PATCH",
-    headers: { "Content-Type": "application/json" },
+    headers: { "Content-Type": "application/json", ...authHeaders() },
     body: JSON.stringify({ service_url: serviceUrl, frontend_urls: frontendUrls }),
   });
   if (!res.ok) {
@@ -211,7 +223,7 @@ export async function issueProbeToken(systemId: string): Promise<IssueTokenRespo
     `${BASE}/api/v1/systems/${encodeURIComponent(systemId)}/token`,
     {
       method:  "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: { "Content-Type": "application/json", ...authHeaders() },
       body:    JSON.stringify({ scopes: ["os", "services", "network", "processes"] }),
     }
   );
@@ -225,7 +237,7 @@ export async function issueProbeToken(systemId: string): Promise<IssueTokenRespo
 export async function revokeProbeToken(systemId: string, tokenId: string): Promise<void> {
   const res = await fetch(
     `${BASE}/api/v1/systems/${encodeURIComponent(systemId)}/token/${encodeURIComponent(tokenId)}`,
-    { method: "DELETE" }
+    { method: "DELETE", headers: authHeaders() }
   );
   if (!res.ok) {
     const err = await res.json().catch(() => ({ detail: res.statusText }));
@@ -375,11 +387,31 @@ export interface ArchitectureInfo {
   collected_at:  string;
 }
 
+export interface PageInfo {
+  path:          string;
+  title?:        string;
+  auth_required: boolean;
+  status_code:   number;
+  redirects_to?: string;
+}
+
+export interface FrontendPageInfo {
+  url:              string;
+  framework:        string;   // "Next.js" | "React" | "Vue.js" | ""
+  total_pages:      number;
+  public_pages:     number;
+  protected_pages:  number;
+  pages:            PageInfo[];
+  collected_at:     string;
+  error?:           string;
+}
+
 export interface ProbeExtendedData {
   database?:     DatabaseInfo | null;
   api_schema?:   APISchemaInfo | null;
   synthetics:    SyntheticResult[];
   architecture?: ArchitectureInfo | null;
+  frontends?:    FrontendPageInfo[];
   updated_at?:   string;
 }
 

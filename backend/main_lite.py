@@ -11,7 +11,15 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 from contextlib import asynccontextmanager
+
+# Load .env for local development (no-op in Railway where vars are set natively)
+try:
+    from dotenv import load_dotenv
+    load_dotenv()
+except ImportError:
+    pass
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -24,6 +32,7 @@ from api.systems import router as systems_router
 from api.tokens import router as tokens_router
 from api.topology_pg import router as topology_router
 from api.websocket import router as ws_router
+from core.auth import APIKeyMiddleware
 from core.connections import ConnectionManager
 from core.probe_watcher import probe_watcher_loop
 from core.prober import probe_loop
@@ -82,12 +91,33 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
+# ── CORS ─────────────────────────────────────────────────────────────────────
+# In production set DASHBOARD_URL to your Vercel/Railway dashboard origin.
+# e.g. DASHBOARD_URL=https://openwatch.vercel.app
+# Multiple origins can be comma-separated:
+#   DASHBOARD_URL=https://openwatch.vercel.app,https://custom.domain.com
+_raw_origins = os.getenv("DASHBOARD_URL", "")
+if _raw_origins:
+    _allowed_origins = [o.strip() for o in _raw_origins.split(",") if o.strip()]
+else:
+    # Dev fallback — allow localhost on any common port
+    _allowed_origins = [
+        "http://localhost:3000",
+        "http://localhost:3001",
+        "http://127.0.0.1:3000",
+    ]
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
-    allow_methods=["*"],
+    allow_origins=_allowed_origins,
+    allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
     allow_headers=["*"],
+    allow_credentials=True,
 )
+
+# ── Dashboard API key auth ────────────────────────────────────────────────────
+# Probe routes (HMAC) are exempt; all other management routes require X-OW-Key.
+app.add_middleware(APIKeyMiddleware)
 
 app.include_router(ingest_router)
 app.include_router(probe_router)

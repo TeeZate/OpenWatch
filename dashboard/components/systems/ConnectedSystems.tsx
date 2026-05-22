@@ -15,6 +15,12 @@ export function ConnectedSystems() {
   const [selectedSystem,  setSelectedSystem]  = useState<MonitoredSystem | null>(null);
   const atLimit = total >= max;
 
+  function handleViewSystem(systemId: string) {
+    const found = systems.find(s => s.id === systemId);
+    if (found) setSelectedSystem(found);
+    setShowModal(false);
+  }
+
   // ── Detail view ────────────────────────────────────────────────────────────
   if (selectedSystem) {
     return (
@@ -82,7 +88,7 @@ export function ConnectedSystems() {
         </div>
 
         {showModal && (
-          <AddSystemModal onAdd={add} onClose={() => setShowModal(false)} atLimit={atLimit} />
+          <AddSystemModal onAdd={add} onClose={() => setShowModal(false)} onViewSystem={handleViewSystem} atLimit={atLimit} />
         )}
       </>
     );
@@ -152,7 +158,7 @@ export function ConnectedSystems() {
       </div>
 
       {showModal && (
-        <AddSystemModal onAdd={add} onClose={() => setShowModal(false)} atLimit={atLimit} />
+        <AddSystemModal onAdd={add} onClose={() => setShowModal(false)} onViewSystem={handleViewSystem} atLimit={atLimit} />
       )}
     </>
   );

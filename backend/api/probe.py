@@ -156,7 +156,7 @@ async def get_probe_extended(system_id: str, request: Request) -> dict:
     redis = request.app.state.redis
     raw   = await redis.get(PROBE_EXTENDED_KEY.format(system_id=system_id))
     if raw is None:
-        return {"database": None, "api_schema": None, "synthetics": []}
+        return {"database": None, "api_schema": None, "synthetics": [], "frontends": []}
     try:
         return json.loads(raw)
     except Exception:
@@ -431,6 +431,7 @@ async def _write_probe_data(system_id: str, payload: dict, redis) -> None:
     if payload.get("api_schema")   is not None: extended["api_schema"]    = payload["api_schema"]
     if payload.get("synthetics")   is not None: extended["synthetics"]    = payload["synthetics"]
     if payload.get("architecture") is not None: extended["architecture"]  = payload["architecture"]
+    if payload.get("frontends")    is not None: extended["frontends"]     = payload["frontends"]
     if extended:
         ext_key = PROBE_EXTENDED_KEY.format(system_id=system_id)
         extended["updated_at"] = now
