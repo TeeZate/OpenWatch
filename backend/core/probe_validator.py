@@ -109,11 +109,31 @@ async def validate_probe_payload(
         return False, "Missing X-OpenWatch-Signature header"
 
     # ── Check 6: Sequence number (replay protection) ──────────────────────────
+    # The seq_key TTL is 7 days, so it survives across restarts.
+    # The register endpoint deletes it on re-register, but as a safety net we
+    # also allow a "reset" if the new sequence is significantly lower than the
+    # last accepted — this covers the case where re-registration and the first
+    # push race and the delete hasn't propagated yet.
     seq_key  = PROBE_SEQ_KEY.format(system_id=system_id)
     last_seq = await redis.get(seq_key)
     new_seq  = int(payload.get("sequence", 0))
-    if last_seq is not None and new_seq <= int(last_seq):
-        return False, f"Replay detected: sequence {new_seq} <= last accepted {last_seq}"
+    if last_seq is not None:
+        last_seq_int = int(last_seq)
+        # Allow if new_seq is strictly greater (normal advancing case)
+        # Also allow if new_seq looks like a fresh restart (reset to near-zero
+        # after a large prior run — the re-register endpoint should have cleared
+        # this, but handle the race defensively).
+        if new_seq <= last_seq_int:
+            # Probe restarted (seq reset to 0..N) but register didn't clear the key yet.
+            # Accept if new_seq is very low (< 10) — it's almost certainly a fresh start.
+            if new_seq >= 10:
+                return False, f"Replay detected: sequence {new_seq} <= last accepted {last_seq}"
+            # new_seq < 10 → treat as fresh restart; the key will be overwritten below
+            logger.info(
+                "Probe for system %s appears to have restarted (seq %d after %d). "
+                "Accepting fresh start.",
+                system_id, new_seq, last_seq_int,
+            )
 
     return True, None
 

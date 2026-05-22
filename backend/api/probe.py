@@ -247,16 +247,23 @@ async def register_probe(
     stored_fp = token_data.get("host_fingerprint", "")
     if stored_fp:
         if stored_fp == host_fingerprint:
-            # Idempotent — same machine re-registering (e.g. after restart)
+            # Idempotent — same machine re-registering after a restart/redeploy.
+            # IMPORTANT: reset the sequence counter so the probe can start from 0.
+            # Without this, Railway redeploys cause permanent "Replay detected"
+            # rejections because the probe's seq resets to 0 but Redis still
+            # holds the last accepted sequence from the previous run.
+            seq_key = PROBE_SEQ_KEY.format(system_id=system_id)
+            await redis.delete(seq_key)
             logger.info(
-                "Probe re-registered for system %s (token %s) — same fingerprint.",
+                "Probe re-registered for system %s (token %s) — same fingerprint. "
+                "Sequence counter reset to allow fresh start.",
                 system_id, token_id
             )
             return {
                 "registered": True,
                 "status":     "already_active",
                 "system_id":  system_id,
-                "message":    "Probe already registered with this fingerprint.",
+                "message":    "Probe already registered. Sequence counter reset — ready to push.",
             }
         else:
             # Different machine — reject
