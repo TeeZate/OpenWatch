@@ -69,18 +69,11 @@ function SyntheticCard({ result }: { result: SyntheticResult }) {
 
 function EmptyState() {
   return (
-    <div className="rounded-lg border border-gray-800 bg-gray-900/30 px-4 py-4 space-y-2">
+    <div className="rounded-lg border border-gray-800 bg-gray-900/30 px-4 py-4 space-y-1.5">
       <p className="text-sm text-gray-400 font-semibold">No synthetic checks configured</p>
       <p className="text-xs text-gray-600">
-        Add your frontend URLs to the probe service on Railway:
-      </p>
-      <div className="bg-gray-950 border border-gray-700 rounded px-3 py-2 font-mono text-[11px] text-gray-400 space-y-0.5">
-        <div>
-          <span className="text-blue-400">OPENWATCH_FRONTEND_URLS</span>=https://yourapp.com,https://app.yourapp.com
-        </div>
-      </div>
-      <p className="text-gray-600 text-[11px]">
-        The probe will check each URL every 5 minutes and report status, latency and HTTP code.
+        Add your frontend URLs in the <span className="text-gray-400 font-medium">Discovery Config</span> section
+        below — the probe picks them up automatically within 5 minutes.
       </p>
     </div>
   );
@@ -111,11 +104,13 @@ export function SyntheticsPanel({ synthetics }: Props) {
         {down > 0     && <span className="text-red-400">{down} down</span>}
       </div>
 
-      {/* Cards */}
+      {/* Cards — deduplicate by URL so duplicate entries never cause React key collisions */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2">
-        {synthetics.map((s) => (
-          <SyntheticCard key={s.url} result={s} />
-        ))}
+        {synthetics
+          .filter((s, i, arr) => arr.findIndex((x) => x.url === s.url) === i)
+          .map((s, i) => (
+            <SyntheticCard key={`${s.url}-${i}`} result={s} />
+          ))}
       </div>
     </div>
   );

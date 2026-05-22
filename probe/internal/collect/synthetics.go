@@ -44,17 +44,20 @@ var syntheticClient = &http.Client{
 }
 
 // CollectSynthetics checks each URL and returns one result per URL.
-// name is derived from the URL hostname if not explicitly set.
+// Duplicate URLs are deduplicated before checking — only the first occurrence
+// is kept. name is derived from the URL hostname if not explicitly set.
 func CollectSynthetics(rawURLs []string) []SyntheticResult {
 	if len(rawURLs) == 0 {
 		return nil
 	}
+	seen    := make(map[string]bool, len(rawURLs))
 	results := make([]SyntheticResult, 0, len(rawURLs))
 	for _, raw := range rawURLs {
 		raw = strings.TrimSpace(raw)
-		if raw == "" {
+		if raw == "" || seen[raw] {
 			continue
 		}
+		seen[raw] = true
 		results = append(results, checkSynthetic(raw))
 	}
 	return results
