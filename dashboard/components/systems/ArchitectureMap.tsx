@@ -5,6 +5,7 @@
 import { useMemo } from "react";
 import type {
   MonitoredSystem,
+  SystemDetail,
   ProbeStatusResponse,
   ProbeExtendedData,
   APIEndpoint,
@@ -140,7 +141,7 @@ function bezier(
 // ── Main component ────────────────────────────────────────────────────────────
 
 interface Props {
-  system:   MonitoredSystem;
+  system:   MonitoredSystem | SystemDetail;
   status:   ProbeStatusResponse | null;
   extended: ProbeExtendedData | null;
 }
@@ -202,9 +203,9 @@ export function ArchitectureMap({ system, status, extended }: Props) {
     // INFRA nodes
     const infra: { id: string; name: string; kind: string; icon: string; sub: string; status?: string; latency?: number }[] = [];
 
-    // Database from probe service checks
-    const svcChecks = system as unknown as { sub_services?: { name: string; kind: string; status: string; latency_ms?: number }[] };
-    for (const svc of (svcChecks.sub_services ?? [])) {
+    // Database / cache from probe service checks (populated once detail is loaded)
+    const subServices = ("sub_services" in system ? system.sub_services : null) ?? [];
+    for (const svc of subServices) {
       const k = svc.kind.toLowerCase();
       if (k.includes("database") || k.includes("postgres") || k.includes("sql") || k.includes("mongo")) {
         infra.push({ id: `svc-${svc.name}`, name: svc.name, kind: "database", icon: "🗄", sub: svc.kind, status: svc.status, latency: svc.latency_ms });
@@ -524,10 +525,17 @@ export function ArchitectureMap({ system, status, extended }: Props) {
           OPENWATCH AUTO-DISCOVERY  ·  {system.name.toUpperCase()}  ·  {new Date().toLocaleDateString()}
         </text>
 
-        {/* ── "Collecting…" overlay if no data yet ─────────────────────────── */}
-        {!arch && !schema && infraNodes.length === 0 && (
-          <text x={W / 2} y={H / 2} fontSize={13} fill="#334155" textAnchor="middle">
-            Collecting architecture data… (first extended cycle in ~30 s after probe starts)
+        {/* ── "Collecting…" hint — only shown in the FRONTENDS row when empty ── */}
+        {frontends.length === 0 && (
+          <text x={W / 2} y={LAYER.frontends.y + 50}
+            fontSize={9} fill="#1e293b" textAnchor="middle" letterSpacing={1}>
+            FRONTEND URLS COLLECTING… (auto-discovered from CORS headers each 5 min)
+          </text>
+        )}
+        {routeGroups.length === 0 && (
+          <text x={API_X + API_W / 2} y={LAYER.api.y + LAYER.api.h / 2}
+            fontSize={9} fill="#1e293b" textAnchor="middle" letterSpacing={1}>
+            API ENDPOINTS COLLECTING… (OpenAPI discovery runs each 5 min)
           </text>
         )}
       </svg>

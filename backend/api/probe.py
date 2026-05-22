@@ -444,7 +444,10 @@ async def _write_probe_data(system_id: str, payload: dict, redis) -> None:
         except Exception:
             pass
 
-    # Merge synthetic checks into sub_services so they appear in the topology graph
+    # Merge synthetic checks into sub_services so they appear in the topology graph.
+    # On non-extended cycles (every 30s) the probe sends no synthetics — we carry
+    # forward the previously-cached synthetic services so they don't disappear from
+    # the topology between the 5-minute extended collection windows.
     synthetic_svcs = []
     for syn in payload.get("synthetics", []):
         synthetic_svcs.append({
@@ -454,6 +457,13 @@ async def _write_probe_data(system_id: str, payload: dict, redis) -> None:
             "latency_ms": syn.get("latency_ms"),
             "message":    syn.get("error") or (f"HTTP {syn['status_code']}" if syn.get("status_code") else None),
         })
+
+    if not synthetic_svcs:
+        # No synthetics in this (non-extended) cycle — preserve cached ones
+        synthetic_svcs = [
+            s for s in topo.get("sub_services", [])
+            if s.get("kind") in ("http", "https")
+        ]
 
     all_services = services + synthetic_svcs
     topo["sub_services"]  = all_services

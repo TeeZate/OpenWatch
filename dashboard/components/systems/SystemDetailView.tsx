@@ -300,7 +300,7 @@ export function SystemDetailView({ system, onBack }: Props) {
           <div>
             <SectionLabel label="Architecture Map" />
             <ArchitectureMap
-              system={system}
+              system={detail ?? system}
               status={probeStatus}
               extended={extended ?? null}
             />

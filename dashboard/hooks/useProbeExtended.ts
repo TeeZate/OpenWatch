@@ -17,10 +17,23 @@ export function useProbeExtended(systemId: string) {
   const load = useCallback(async () => {
     try {
       const result = await fetchProbeExtended(systemId);
-      setData(result);
+      // Only replace data if the new result has content — stale-while-revalidate:
+      // never flash blank/null between polls when we already have data.
+      const hasContent =
+        result.database   != null ||
+        result.api_schema != null ||
+        (result.synthetics?.length ?? 0) > 0 ||
+        result.architecture != null;
+      if (hasContent) {
+        setData(result);
+      } else {
+        // Keep previous data; only update if we had nothing before
+        setData(prev => prev ?? result);
+      }
       setError(null);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Could not fetch extended data");
+      // Keep previous data on error — don't wipe what's already displayed
     } finally {
       setLoading(false);
     }
