@@ -10,6 +10,7 @@ import { ProbePanel }        from "./ProbePanel";
 import { DatabasePanel }     from "./DatabasePanel";
 import { APISchemaPanel }    from "./APISchemaPanel";
 import { SyntheticsPanel }   from "./SyntheticsPanel";
+import { ArchitectureMap }   from "./ArchitectureMap";
 import type { MonitoredSystem, SubService, ProbeTopologyInfo } from "@/lib/api";
 
 const SystemTopologyGraph = dynamic(
@@ -290,6 +291,18 @@ export function SystemDetailView({ system, onBack }: Props) {
             <InfraPanel
               topo={probeStatus.topology as Partial<ProbeTopologyInfo>}
               os={probeStatus.os as Record<string, unknown>}
+            />
+          </div>
+        )}
+
+        {/* ── Architecture Map (probe-connected systems only) ────────────── */}
+        {probeStatus?.connected && (
+          <div>
+            <SectionLabel label="Architecture Map" />
+            <ArchitectureMap
+              system={system}
+              status={probeStatus}
+              extended={extended ?? null}
             />
           </div>
         )}

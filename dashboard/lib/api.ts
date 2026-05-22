@@ -340,11 +340,27 @@ export interface SyntheticResult {
   error?:       string;
 }
 
+export interface ArchIntegration {
+  name:    string;
+  kind:    string;
+  env_key: string;
+  icon?:   string;
+}
+
+export interface ArchitectureInfo {
+  hosting?:      string;
+  runtime?:      string;
+  integrations:  ArchIntegration[];
+  cors_origins?: string[];
+  collected_at:  string;
+}
+
 export interface ProbeExtendedData {
-  database?:   DatabaseInfo | null;
-  api_schema?: APISchemaInfo | null;
-  synthetics:  SyntheticResult[];
-  updated_at?: string;
+  database?:     DatabaseInfo | null;
+  api_schema?:   APISchemaInfo | null;
+  synthetics:    SyntheticResult[];
+  architecture?: ArchitectureInfo | null;
+  updated_at?:   string;
 }
 
 export const fetchProbeExtended = (systemId: string) =>

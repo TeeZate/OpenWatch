@@ -45,9 +45,10 @@ type Payload struct {
 	Topology        TopologyInfo    `json:"topology"`
 
 	// Extended fields — only populated every ExtendedEvery pushes (heavy collectors).
-	Database   *DatabaseInfo    `json:"database,omitempty"`
-	APISchema  *APISchemaInfo   `json:"api_schema,omitempty"`
-	Synthetics []SyntheticResult `json:"synthetics,omitempty"`
+	Database     *DatabaseInfo     `json:"database,omitempty"`
+	APISchema    *APISchemaInfo    `json:"api_schema,omitempty"`
+	Synthetics   []SyntheticResult `json:"synthetics,omitempty"`
+	Architecture *ArchitectureInfo `json:"architecture,omitempty"`
 }
 
 // ExtendedEvery controls how often the heavy collectors run.
@@ -153,6 +154,10 @@ func Build(cfg *config.Config, fp string, seq int64, version string) (*Payload, 
 		if len(cfg.FrontendURLs) > 0 {
 			p.Synthetics = CollectSynthetics(cfg.FrontendURLs)
 		}
+
+		// Architecture discovery — env-var based integration detection
+		arch := CollectArchitecture()
+		p.Architecture = &arch
 	}
 
 	return p, nil

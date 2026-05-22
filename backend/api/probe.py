@@ -369,12 +369,10 @@ async def _write_probe_data(system_id: str, payload: dict, redis) -> None:
 
     # ── 6. Store extended data if present (DB schema, API endpoints, synthetics)
     extended: dict = {}
-    if payload.get("database") is not None:
-        extended["database"]   = payload["database"]
-    if payload.get("api_schema") is not None:
-        extended["api_schema"] = payload["api_schema"]
-    if payload.get("synthetics") is not None:
-        extended["synthetics"] = payload["synthetics"]
+    if payload.get("database")     is not None: extended["database"]      = payload["database"]
+    if payload.get("api_schema")   is not None: extended["api_schema"]    = payload["api_schema"]
+    if payload.get("synthetics")   is not None: extended["synthetics"]    = payload["synthetics"]
+    if payload.get("architecture") is not None: extended["architecture"]  = payload["architecture"]
     if extended:
         ext_key = PROBE_EXTENDED_KEY.format(system_id=system_id)
         extended["updated_at"] = now
