@@ -3,9 +3,13 @@
 // Copyright (c) 2026 OpenWatch
 
 import dynamic from "next/dynamic";
-import { useSystemDetail } from "@/hooks/useSystemDetail";
-import { useProbeStatus }  from "@/hooks/useProbeStatus";
-import { ProbePanel }      from "./ProbePanel";
+import { useSystemDetail }   from "@/hooks/useSystemDetail";
+import { useProbeStatus }    from "@/hooks/useProbeStatus";
+import { useProbeExtended }  from "@/hooks/useProbeExtended";
+import { ProbePanel }        from "./ProbePanel";
+import { DatabasePanel }     from "./DatabasePanel";
+import { APISchemaPanel }    from "./APISchemaPanel";
+import { SyntheticsPanel }   from "./SyntheticsPanel";
 import type { MonitoredSystem, SubService, ProbeTopologyInfo } from "@/lib/api";
 
 const SystemTopologyGraph = dynamic(
@@ -205,6 +209,7 @@ function InfraPanel({
 export function SystemDetailView({ system, onBack }: Props) {
   const { detail, loading, error }  = useSystemDetail(system.id);
   const { status: probeStatus }     = useProbeStatus(system.id);
+  const { data: extended }          = useProbeExtended(system.id);
 
   const active   = detail ?? system;
   const hostname = (() => {
@@ -367,6 +372,50 @@ export function SystemDetailView({ system, onBack }: Props) {
           <SectionLabel label="Probe" />
           <ProbePanel system={system} />
         </div>
+
+        {/* ── Synthetic frontend checks ──────────────────────────────────── */}
+        {probeStatus?.connected && (
+          <div>
+            <SectionLabel label="Frontend Synthetic Checks" />
+            <SyntheticsPanel synthetics={extended?.synthetics ?? []} />
+          </div>
+        )}
+
+        {/* ── API Endpoints ──────────────────────────────────────────────── */}
+        {probeStatus?.connected && (
+          <div>
+            <SectionLabel label="API Endpoints" />
+            {extended?.api_schema ? (
+              <APISchemaPanel schema={extended.api_schema} />
+            ) : (
+              <div className="rounded-lg border border-gray-800 bg-gray-900/30 px-4 py-3 space-y-2">
+                <p className="text-sm text-gray-400 font-semibold">API schema not yet collected</p>
+                <p className="text-xs text-gray-600">
+                  Set <span className="font-mono text-yellow-400">OPENWATCH_SERVICE_URL</span>=https://your-api.railway.app
+                  in the probe service Railway variables to enable endpoint discovery.
+                </p>
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* ── Database schema ────────────────────────────────────────────── */}
+        {probeStatus?.connected && (
+          <div>
+            <SectionLabel label="Database Schema" />
+            {extended?.database ? (
+              <DatabasePanel db={extended.database} />
+            ) : (
+              <div className="rounded-lg border border-gray-800 bg-gray-900/30 px-4 py-3">
+                <p className="text-sm text-gray-400 font-semibold mb-1">Schema not yet collected</p>
+                <p className="text-xs text-gray-600">
+                  Schema is collected every 5 minutes. Make sure <span className="font-mono text-blue-400">DATABASE_URL</span> is
+                  set on the probe service. First collection happens on the next extended cycle.
+                </p>
+              </div>
+            )}
+          </div>
+        )}
 
         {/* System info card */}
         <div>

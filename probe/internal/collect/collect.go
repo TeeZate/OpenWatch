@@ -43,7 +43,16 @@ type Payload struct {
 	Network         NetworkMetrics  `json:"network"`
 	Processes       []ProcessInfo   `json:"processes"`
 	Topology        TopologyInfo    `json:"topology"`
+
+	// Extended fields — only populated every ExtendedEvery pushes (heavy collectors).
+	Database   *DatabaseInfo    `json:"database,omitempty"`
+	APISchema  *APISchemaInfo   `json:"api_schema,omitempty"`
+	Synthetics []SyntheticResult `json:"synthetics,omitempty"`
 }
+
+// ExtendedEvery controls how often the heavy collectors run.
+// At a 30-second push interval this means every 5 minutes.
+const ExtendedEvery = 10
 
 type OSMetrics struct {
 	CPUPct      float64 `json:"cpu_pct"`
@@ -93,6 +102,7 @@ type TopologyInfo struct {
 
 // Build collects all telemetry and returns a payload ready for signing + pushing.
 // probeID is a stable identifier for this probe installation (generated on first run).
+// When seq == 1 or seq % ExtendedEvery == 0, the heavy extended collectors also run.
 func Build(cfg *config.Config, fp string, seq int64, version string) (*Payload, error) {
 	host, _ := os.Hostname()
 	if host == "" {
@@ -117,6 +127,33 @@ func Build(cfg *config.Config, fp string, seq int64, version string) (*Payload, 
 	p.Services  = collectServices(cfg.Services)
 	p.Network   = collectNetwork()
 	p.Processes = collectProcesses()
+
+	// ── Extended collectors (run on seq 1 and every ExtendedEvery pushes) ────
+	if seq == 1 || seq%ExtendedEvery == 0 {
+		// Database schema — uses DATABASE_URL from auto-discovered services
+		dbURL := ""
+		for _, svc := range cfg.Services {
+			if svc.Kind == "database" || svc.Kind == "postgres" || svc.Kind == "postgresql" {
+				dbURL = svc.URL
+				break
+			}
+		}
+		if dbURL != "" {
+			db := CollectDatabase(dbURL)
+			p.Database = &db
+		}
+
+		// API schema — fetches /openapi.json from OPENWATCH_SERVICE_URL
+		if cfg.ServiceURL != "" {
+			schema := CollectAPISchema(cfg.ServiceURL)
+			p.APISchema = &schema
+		}
+
+		// Synthetic frontend checks — OPENWATCH_FRONTEND_URLS
+		if len(cfg.FrontendURLs) > 0 {
+			p.Synthetics = CollectSynthetics(cfg.FrontendURLs)
+		}
+	}
 
 	return p, nil
 }

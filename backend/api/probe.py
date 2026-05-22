@@ -25,6 +25,7 @@ from core.probe_validator import validate_probe_payload
 from db.probe_metrics_ts import INSERT_PROBE_METRICS, SELECT_PROBE_METRICS_HISTORY
 from db.probe_tokens import ACTIVATE_TOKEN, SELECT_TOKEN
 from db.redis_client import (
+    PROBE_EXTENDED_KEY,
     PROBE_METRICS_KEY,
     PROBE_REVOKED_SET,
     PROBE_SEQ_KEY,
@@ -90,6 +91,25 @@ async def get_probe_status(system_id: str, request: Request) -> dict:
         "processes":  metrics.get("processes", []),
         "topology":   metrics.get("topology", {}),
     }
+
+
+# ── GET /api/v1/systems/{system_id}/probe/extended ──────────────────────────
+
+@router.get("/systems/{system_id}/probe/extended")
+async def get_probe_extended(system_id: str, request: Request) -> dict:
+    """Return the latest extended probe data: database schema, API endpoints, synthetics.
+
+    This data is collected every ~5 minutes by the probe (every 10th push cycle)
+    and stored with a 10-minute TTL. Returns empty dicts/lists if not yet collected.
+    """
+    redis = request.app.state.redis
+    raw   = await redis.get(PROBE_EXTENDED_KEY.format(system_id=system_id))
+    if raw is None:
+        return {"database": None, "api_schema": None, "synthetics": []}
+    try:
+        return json.loads(raw)
+    except Exception:
+        return {"database": None, "api_schema": None, "synthetics": []}
 
 
 # ── GET /api/v1/systems/{system_id}/probe/metrics/history ────────────────────
@@ -347,7 +367,20 @@ async def _write_probe_data(system_id: str, payload: dict, redis) -> None:
 
     await pipe.execute()
 
-    # ── 6. Merge sub-services into existing topology (separate read-modify-write)
+    # ── 6. Store extended data if present (DB schema, API endpoints, synthetics)
+    extended: dict = {}
+    if payload.get("database") is not None:
+        extended["database"]   = payload["database"]
+    if payload.get("api_schema") is not None:
+        extended["api_schema"] = payload["api_schema"]
+    if payload.get("synthetics") is not None:
+        extended["synthetics"] = payload["synthetics"]
+    if extended:
+        ext_key = PROBE_EXTENDED_KEY.format(system_id=system_id)
+        extended["updated_at"] = now
+        await redis.set(ext_key, json.dumps(extended), ex=600)  # 10-minute TTL
+
+    # ── 7. Merge sub-services into existing topology (separate read-modify-write)
     topo_raw = await redis.get(topo_key)
     topo: dict = {}
     if topo_raw:
@@ -356,9 +389,21 @@ async def _write_probe_data(system_id: str, payload: dict, redis) -> None:
         except Exception:
             pass
 
-    topo["sub_services"]  = services
+    # Merge synthetic checks into sub_services so they appear in the topology graph
+    synthetic_svcs = []
+    for syn in payload.get("synthetics", []):
+        synthetic_svcs.append({
+            "name":       syn.get("name", syn.get("url", "frontend")),
+            "kind":       "http",
+            "status":     syn.get("status", "unknown"),
+            "latency_ms": syn.get("latency_ms"),
+            "message":    syn.get("error") or (f"HTTP {syn['status_code']}" if syn.get("status_code") else None),
+        })
+
+    all_services = services + synthetic_svcs
+    topo["sub_services"]  = all_services
     topo["probe_source"]  = True
-    topo["health_status"] = health_status
+    topo["health_status"] = _infer_overall_status(all_services)
     topo["updated_at"]    = now
     await redis.set(topo_key, json.dumps(topo), ex=120)
 

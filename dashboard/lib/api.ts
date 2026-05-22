@@ -284,3 +284,68 @@ export const fetchProbeMetricsHistory = (systemId: string, window: ProbeMetricsW
   get<ProbeMetricsPoint[]>(
     `/api/v1/systems/${encodeURIComponent(systemId)}/probe/metrics/history?window=${window}`
   );
+
+// ── Probe extended data (schema, endpoints, synthetics) ───────────────────────
+
+export interface DBColumn {
+  name:        string;
+  data_type:   string;
+  nullable:    boolean;
+  has_default: boolean;
+  is_pk?:      boolean;
+}
+
+export interface DBTable {
+  name:       string;
+  row_est:    number;
+  size_bytes: number;
+  columns:    DBColumn[];
+}
+
+export interface DatabaseInfo {
+  connected:    boolean;
+  version?:     string;
+  db_name?:     string;
+  size_bytes:   number;
+  tables:       DBTable[];
+  error?:       string;
+  collected_at: string;
+}
+
+export interface APIEndpoint {
+  method:       string;
+  path:         string;
+  summary?:     string;
+  description?: string;
+  tags?:        string[];
+  deprecated?:  boolean;
+}
+
+export interface APISchemaInfo {
+  title?:       string;
+  version?:     string;
+  endpoints:    APIEndpoint[];
+  source?:      string;
+  error?:       string;
+  collected_at: string;
+}
+
+export interface SyntheticResult {
+  name:         string;
+  url:          string;
+  status:       string;
+  status_code?: number;
+  latency_ms:   number;
+  redirects?:   number;
+  error?:       string;
+}
+
+export interface ProbeExtendedData {
+  database?:   DatabaseInfo | null;
+  api_schema?: APISchemaInfo | null;
+  synthetics:  SyntheticResult[];
+  updated_at?: string;
+}
+
+export const fetchProbeExtended = (systemId: string) =>
+  get<ProbeExtendedData>(`/api/v1/systems/${encodeURIComponent(systemId)}/probe/extended`);

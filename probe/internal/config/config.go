@@ -59,11 +59,15 @@ type Intervals struct {
 
 // Config is the complete runtime configuration for the probe.
 type Config struct {
-	Token    TokenConfig     `json:"token"`
-	CertPEM  string          `json:"cert_pem"`
-	KeyPEM   string          `json:"key_pem"`
-	Services []ServiceConfig `json:"services"`
-	Intervals Intervals      `json:"intervals"`
+	Token        TokenConfig     `json:"token"`
+	CertPEM      string          `json:"cert_pem"`
+	KeyPEM       string          `json:"key_pem"`
+	Services     []ServiceConfig `json:"services"`
+	Intervals    Intervals       `json:"intervals"`
+
+	// Extended monitoring (optional)
+	ServiceURL   string   `json:"service_url"`    // base URL of the monitored API (for OpenAPI fetch)
+	FrontendURLs []string `json:"frontend_urls"`  // comma-separated frontend URLs for synthetic checks
 }
 
 // Load reads configuration from environment variables first, then falls back to
@@ -100,6 +104,19 @@ func Load(path string) (*Config, error) {
 
 	// ── Auto-discover services from well-known env vars ───────────────────────
 	cfg.Services = append(cfg.Services, autoDiscoverServices()...)
+
+	// ── Extended monitoring env vars ──────────────────────────────────────────
+	if v := os.Getenv("OPENWATCH_SERVICE_URL"); v != "" {
+		cfg.ServiceURL = strings.TrimRight(v, "/")
+	}
+	if v := os.Getenv("OPENWATCH_FRONTEND_URLS"); v != "" {
+		for _, u := range strings.Split(v, ",") {
+			u = strings.TrimSpace(u)
+			if u != "" {
+				cfg.FrontendURLs = append(cfg.FrontendURLs, u)
+			}
+		}
+	}
 
 	// ── Expand ${ENV_VAR} references in service URLs ──────────────────────────
 	for i := range cfg.Services {

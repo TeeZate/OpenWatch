@@ -24,7 +24,8 @@ SYSTEM_TOPO_KEY  = "system_topo:{system_id}"      # STRING — JSON topology for
 PROBE_TOKEN_KEY   = "probe_token:{token_id}"      # HASH   — live token state (revocation + fingerprint)
 PROBE_REVOKED_SET = "probe_revoked"               # SET    — token_ids that have been revoked (O(1) check)
 PROBE_SEQ_KEY     = "probe_seq:{system_id}"       # STRING — last accepted sequence number (replay protection)
-PROBE_METRICS_KEY = "probe_metrics:{system_id}"   # STRING — JSON OS/network metrics from probe (TTL: 120 s)
+PROBE_METRICS_KEY   = "probe_metrics:{system_id}"    # STRING — JSON OS/network metrics from probe (TTL: 120 s)
+PROBE_EXTENDED_KEY  = "probe_extended:{system_id}"  # STRING — JSON schema/endpoints/synthetics (TTL: 10 min)
 
 # 5 minutes — if the agent stops reporting, stale keys expire on their own.
 SERVICE_TTL_SECONDS = 300
